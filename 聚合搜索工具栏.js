@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         聚合搜索引擎工具栏
 // @namespace    https://www.via.com
-// @version      2.11.6
-// @description  移动端浏览器脚本：仅域名白名单生效。下滑显示工具栏，触摸不倒计时，离开后计时。主题跟随，支持编辑引擎，油猴菜单栏打开管理界面。默认仅百度。
+// @version      2.11.8
+// @description  移动端浏览器脚本：仅域名白名单生效。下滑显示工具栏，触摸不倒计时，离开后计时。主题跟随，支持编辑引擎，油猴菜单栏打开管理界面。内置5大搜索引擎，设置按钮固定右侧。
 // @author       Assistant
 // @match        *://*/*
 // @grant        GM_setValue
@@ -16,7 +16,11 @@
     'use strict';
 
     const DEFAULT_ENGINES = [
-        { name: '百度', url: 'https://www.baidu.com/s?wd=%s' }
+        { name: 'Bing', url: 'https://cn.bing.com/search?q=%s' },
+        { name: 'Baidu', url: 'https://m.baidu.com/s?wd=%s' },
+        { name: 'Yandex', url: 'https://yandex.com/search/touch/?text=%s' },
+        { name: 'Brave', url: 'https://search.brave.com/search?q=%s' },
+        { name: 'DuckGo', url: 'https://duckduckgo.com/?q=%s' }
     ];
 
     const STORAGE_KEY = 'AggSearchEngines';
@@ -234,19 +238,22 @@
         toolbarElement.style.background = isDark ? 'rgba(30,30,40,0.92)' : 'rgba(240,240,245,0.92)';
         toolbarElement.style.border = isDark ? '0.5px solid rgba(255,255,255,0.2)' : '0.5px solid rgba(0,0,0,0.1)';
         toolbarElement.style.boxShadow = isDark ? '0 4px 16px rgba(0,0,0,0.3)' : '0 4px 12px rgba(0,0,0,0.15)';
-        
-        const buttons = toolbarElement.querySelectorAll('button');
-        buttons.forEach(btn => {
-            if (btn.textContent === '⚙️') {
-                btn.style.background = isDark ? 'rgba(70,70,90,0.9)' : 'rgba(200,200,210,0.9)';
-                btn.style.color = isDark ? 'white' : '#1e1e2c';
-                btn.style.boxShadow = isDark ? '0 1px 2px rgba(0,0,0,0.2)' : '0 1px 2px rgba(0,0,0,0.1)';
-            } else {
-                btn.style.background = isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)';
-                btn.style.color = isDark ? 'white' : '#1e1e2c';
-                btn.style.boxShadow = isDark ? '0 1px 2px rgba(0,0,0,0.1)' : '0 1px 2px rgba(0,0,0,0.05)';
-            }
+
+        // 引擎按钮主题
+        const engineBtns = toolbarElement.querySelectorAll('.agg-engine-btn');
+        engineBtns.forEach(btn => {
+            btn.style.background = isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)';
+            btn.style.color = isDark ? 'white' : '#1e1e2c';
+            btn.style.boxShadow = isDark ? '0 1px 2px rgba(0,0,0,0.1)' : '0 1px 2px rgba(0,0,0,0.05)';
         });
+
+        // 设置按钮主题
+        const settingsBtn = toolbarElement.querySelector('#agg-settings-btn');
+        if (settingsBtn) {
+            settingsBtn.style.background = isDark ? 'rgba(70,70,90,0.9)' : 'rgba(200,200,210,0.9)';
+            settingsBtn.style.color = isDark ? 'white' : '#1e1e2c';
+            settingsBtn.style.boxShadow = isDark ? '0 1px 2px rgba(0,0,0,0.2)' : '0 1px 2px rgba(0,0,0,0.1)';
+        }
     }
 
     function applyThemeToModal() {
@@ -337,17 +344,29 @@
         toolbar.style.cssText = `
             position: fixed; bottom: 8px; left: 8px; right: 8px;
             border-radius: 48px; padding: 4px 8px;
-            display: flex; flex-wrap: nowrap; overflow-x: auto; gap: 4px;
+            display: flex; flex-wrap: nowrap; align-items: center; gap: 4px;
             z-index: 2147483647;
             font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-            -webkit-tap-highlight-color: transparent; scrollbar-width: thin;
+            -webkit-tap-highlight-color: transparent;
             -webkit-overflow-scrolling: touch;
             transition: opacity 0.2s ease, background 0.2s ease;
             opacity: 0; pointer-events: none;
         `;
 
+        // 可滚动的引擎按钮容器
+        const engineScroll = document.createElement('div');
+        engineScroll.id = 'agg-engine-scroll';
+        engineScroll.style.cssText = `
+            display: flex; flex-wrap: nowrap; overflow-x: auto; gap: 4px;
+            flex: 1; min-width: 0;
+            scrollbar-width: thin;
+            -webkit-overflow-scrolling: touch;
+            padding: 2px 0;
+        `;
+
         currentEngines.forEach(engine => {
             const btn = document.createElement('button');
+            btn.className = 'agg-engine-btn';
             btn.textContent = engine.name;
             btn.style.cssText = `
                 border: none; border-radius: 40px;
@@ -360,22 +379,24 @@
                 e.stopPropagation();
                 onEngineClick(engine);
             });
-            toolbar.appendChild(btn);
+            engineScroll.appendChild(btn);
         });
 
+        // 固定的设置按钮
         const settingsBtn = document.createElement('button');
+        settingsBtn.id = 'agg-settings-btn';
         settingsBtn.textContent = '⚙️';
         settingsBtn.style.cssText = `
             border: none; border-radius: 40px;
             padding: 8px 10px; font-size: 14px; font-weight: 500;
             cursor: pointer; white-space: nowrap; flex-shrink: 0;
             display: inline-flex; align-items: center; justify-content: center;
-            gap: 4px; margin-left: 4px;
             transition: transform 0.1s ease, background 0.2s ease;
         `;
         settingsBtn.addEventListener('click', () => openSettingsModal());
-        toolbar.appendChild(settingsBtn);
 
+        toolbar.appendChild(engineScroll);
+        toolbar.appendChild(settingsBtn);
         document.body.appendChild(toolbar);
         toolbarElement = toolbar;
 
@@ -621,7 +642,6 @@
     }
 
     function menuOpenSettings() {
-        // 即使工具栏未显示，也可以打开管理界面（用于编辑引擎）
         openSettingsModal();
     }
 
