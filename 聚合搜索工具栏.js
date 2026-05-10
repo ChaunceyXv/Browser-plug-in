@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         聚合搜索引擎工具栏 (下滑显示 + URL前缀白名单)
-// @namespace    https://www.via.com/
-// @version      2.11.5
-// @description  移动端浏览器脚本：仅域名白名单生效。下滑显示工具栏，触摸不倒计时，离开后计时。主题跟随，支持编辑引擎，油猴菜单栏打开管理界面。
+// @name         聚合搜索引擎工具栏
+// @namespace    https://www.via.com
+// @version      2.11.6
+// @description  移动端浏览器脚本：仅域名白名单生效。下滑显示工具栏，触摸不倒计时，离开后计时。主题跟随，支持编辑引擎，油猴菜单栏打开管理界面。默认仅百度。
 // @author       Assistant
 // @match        *://*/*
 // @grant        GM_setValue
@@ -16,11 +16,7 @@
     'use strict';
 
     const DEFAULT_ENGINES = [
-        { name: 'Google', url: 'https://www.google.com/search?q=%s' },
-        { name: 'Baidu', url: 'https://www.baidu.com/s?wd=%s' },
-        { name: 'Bing', url: 'https://www.bing.com/search?q=%s' },
-        { name: 'DuckDuckGo', url: 'https://duckduckgo.com/?q=%s' },
-        { name: 'Sogou', url: 'https://m.sogou.com/web/searchList.jsp?keyword=%s' }
+        { name: '百度', url: 'https://www.baidu.com/s?wd=%s' }
     ];
 
     const STORAGE_KEY = 'AggSearchEngines';
@@ -407,7 +403,6 @@
     `;
     document.head.appendChild(globalStyle);
 
-    // 管理界面（搜索引擎列表管理）
     function openSettingsModal() {
         if (modalElement?.style.display === 'flex') return;
         if (modalElement) modalElement.remove();
@@ -625,19 +620,11 @@
         editingIndex = -1;
     }
 
-    // 油猴菜单栏命令：打开管理界面
     function menuOpenSettings() {
-        // 如果工具栏还没有初始化（例如不在白名单页面），但用户仍希望打开管理界面，我们可以强制渲染工具栏并打开管理界面
-        if (!toolbarElement) {
-            // 临时渲染工具栏（但不显示，仅用于打开管理界面？更安全的方式：直接调用openSettingsModal
-            // 但openSettingsModal依赖于某些变量，可能在没有工具栏时也能打开，但需确保当前页面能创建模态框
-            openSettingsModal();
-        } else {
-            openSettingsModal();
-        }
+        // 即使工具栏未显示，也可以打开管理界面（用于编辑引擎）
+        openSettingsModal();
     }
 
-    // 注册油猴菜单命令
     GM_registerMenuCommand('⚙️ 打开管理界面', menuOpenSettings);
 
     function init() {
