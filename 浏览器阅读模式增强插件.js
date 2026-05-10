@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         阅读模式增强插件
 // @namespace    https://viayoo.com/
-// @version      12.6
+// @version      12.23
 // @match        *://*/*
 // @run-at       document-end
 // @grant        GM_setValue
@@ -47,15 +47,13 @@
 
     const cfgStyle = `
         #via-cfg-mask { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 2147483647; display: flex; align-items: center; justify-content: center; font-family: -apple-system, sans-serif; }
-        .via-box { width: 85%; max-width: 350px; background: #fff; border-radius: 12px; padding: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); }
-        .via-title { font-size: 18px; font-weight: bold; margin-bottom: 15px; color: #000; border-bottom: 1px solid #eee; padding-bottom: 10px; }
+        .via-box { position: relative; width: 85%; max-width: 350px; background: #fff; border-radius: 12px; padding: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); }
+        .via-title { font-size: 18px; font-weight: bold; margin-bottom: 15px; color: #000; border-bottom: 1px solid #eee; padding-bottom: 10px; padding-right: 30px; }
+        .via-close { position: absolute; top: 12px; right: 12px; width: 28px; height: 28px; border-radius: 50%; background: rgba(0,0,0,0.1); display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 18px; color: #666; transition: 0.2s; }
+        .via-close:hover { background: rgba(0,0,0,0.2); color: #000; }
         .via-label { font-size: 13px; color: #666; display: block; margin-bottom: 5px; }
         .via-input { width: 100%; border: 1px solid #ddd; border-radius: 6px; padding: 8px 10px; margin-bottom: 15px; font-size: 14px; box-sizing: border-box; outline: none; }
-        .via-btns { display: flex; justify-content: flex-end; gap: 12px; margin-top: 10px; }
-        .via-btn { padding: 8px 16px; border-radius: 6px; border: none; font-size: 14px; cursor: pointer; }
-        .via-btn-save { background: #4CAF50; color: #fff; }
-        .via-btn-cancel { background: #f5f5f5; color: #333; }
-        .toggle-switch { display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; }
+        .toggle-switch { display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; flex-wrap: wrap; }
         .toggle-switch span { font-size: 14px; color: #333; }
         .toggle-label { position: relative; display: inline-block; width: 50px; height: 24px; }
         .toggle-label input { opacity: 0; width: 0; height: 0; }
@@ -63,6 +61,7 @@
         .toggle-slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: white; transition: 0.3s; border-radius: 50%; }
         input:checked + .toggle-slider { background-color: #4CAF50; }
         input:checked + .toggle-slider:before { transform: translateX(26px); }
+        .via-hint { font-size: 11px; color: #888; margin-top: 4px; width: 100%; }
     `;
     GM_addStyle(cfgStyle);
 
@@ -85,6 +84,7 @@
         mask.id = 'via-cfg-mask';
         mask.innerHTML = `
             <div class="via-box">
+                <div class="via-close">✕</div>
                 <div class="via-title">⚙️ 配置面板 - ${domain}</div>
                 <div class="toggle-switch">
                     <span>点击翻页</span>
@@ -99,6 +99,7 @@
                         <input type="checkbox" id="auto-enter-toggle" ${autoEnterEnabled ? 'checked' : ''}>
                         <span class="toggle-slider"></span>
                     </label>
+                    <div class="via-hint">自动阅读模式已匹配大部分规则，非正文误判请自定义正文选择器来规避</div>
                 </div>
                 <span class="via-label">章节标题选择器</span>
                 <input type="text" id="via-t" class="via-input" placeholder=".chapter-title" value="${escapeHtml(rule.title || '')}">
@@ -108,31 +109,46 @@
                 <input type="text" id="via-n" class="via-input" placeholder=".next-page" value="${escapeHtml(rule.next || '')}">
                 <span class="via-label">过滤选择器（与内置规则同时生效）</span>
                 <input type="text" id="via-f" class="via-input" placeholder=".ad, .banner, .tips, .share" value="${escapeHtml(rule.filter || '')}">
-                <div class="via-btns">
-                    <button class="via-btn via-btn-cancel" id="via-cancel">取消</button>
-                    <button class="via-btn via-btn-save" id="via-save">保存</button>
-                </div>
             </div>`;
         document.body.appendChild(mask);
+
         const clickPageToggle = document.getElementById('click-page-toggle');
+        const autoEnterToggle = document.getElementById('auto-enter-toggle');
+        const titleInput = document.getElementById('via-t');
+        const contentInput = document.getElementById('via-c');
+        const nextInput = document.getElementById('via-n');
+        const filterInput = document.getElementById('via-f');
+        const closeBtn = mask.querySelector('.via-close');
+
+        function saveCurrentRules() {
+            const t = titleInput.value.trim();
+            const c = contentInput.value.trim();
+            const n = nextInput.value.trim();
+            const f = filterInput.value.trim();
+            if (!t && !c && !n && !f) {
+                delete customRules[domain];
+            } else {
+                customRules[domain] = { title: t, content: c, next: n, filter: f };
+            }
+            saveRules();
+        }
+
         clickPageToggle.onchange = () => {
             settings.clickPage = clickPageToggle.checked;
             saveSettings();
         };
-        const autoEnterToggle = document.getElementById('auto-enter-toggle');
         autoEnterToggle.onchange = () => {
             autoEnterRules[domain] = autoEnterToggle.checked;
             saveAutoEnter();
         };
-        document.getElementById('via-cancel').onclick = () => mask.remove();
-        document.getElementById('via-save').onclick = () => {
-            const t = document.getElementById('via-t').value.trim();
-            const c = document.getElementById('via-c').value.trim();
-            const n = document.getElementById('via-n').value.trim();
-            const f = document.getElementById('via-f').value.trim();
-            if (!t && !c && !n && !f) delete customRules[domain];
-            else customRules[domain] = { title: t, content: c, next: n, filter: f };
-            saveRules();
+
+        titleInput.addEventListener('blur', saveCurrentRules);
+        contentInput.addEventListener('blur', saveCurrentRules);
+        nextInput.addEventListener('blur', saveCurrentRules);
+        filterInput.addEventListener('blur', saveCurrentRules);
+
+        closeBtn.onclick = () => {
+            saveCurrentRules();
             mask.remove();
         };
     }
@@ -148,27 +164,246 @@
 
     GM_registerMenuCommand("⚙️ 配置面板", showViaConfig);
 
-    // 原网页入口按钮
+    // ================== 手动退出标记处理（使用 GM_setValue）==================
+    const getPageKey = () => {
+        return window.location.origin + window.location.pathname;
+    };
+    const manualExitKey = 'reader_manual_exit_' + getPageKey();
+    const exitFlag = GM_getValue(manualExitKey, 0);
+    const now = Date.now();
+    // 如果标记存在且在 3 秒内（避免旧残留），则跳过自动进入
+    if (exitFlag && (now - exitFlag < 3000)) {
+        GM_setValue(manualExitKey, 0);
+        var skipAutoEnter = true;
+        console.log('[阅读模式] 检测到手动退出标记，本次跳过自动进入');
+    } else {
+        if (exitFlag) GM_setValue(manualExitKey, 0);
+        var skipAutoEnter = false;
+    }
+
+    // ================== 创建可拖拽的阅读按钮（增加移动容忍阈值）==================
     if (!document.getElementById("txtyd")) {
         const btn = document.createElement("div");
         btn.id = "txtyd";
         btn.innerHTML = "📖";
-        btn.style = "position:fixed;bottom:20px;right:20px;z-index:2147483647;width:45px;height:45px;line-height:45px;text-align:center;background:rgba(0,0,0,0.5);color:#fff;border-radius:50%;cursor:pointer;opacity:0;transform:translateX(60px);transition:0.3s;font-size:28px;user-select:none;";
-        btn.onclick = () => { enterReaderMode(); };
+        btn.style.cssText = `
+            position: fixed;
+            z-index: 2147483647;
+            width: 45px;
+            height: 45px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0,0,0,0.5);
+            color: #fff;
+            border-radius: 50%;
+            cursor: grab;
+            font-size: 28px;
+            user-select: none;
+            transition: transform 0.3s ease;
+            touch-action: none;
+        `;
         document.body.appendChild(btn);
 
+        const savedPos = GM_getValue("reader_btn_pos", null);
+        let btnLeft = 0, btnTop = 0;
+        let isHidden = false;
+
+        function getHideDirection() {
+            const rect = btn.getBoundingClientRect();
+            const centerX = rect.left + rect.width / 2;
+            const screenWidth = window.innerWidth;
+            return centerX < screenWidth / 2 ? 'left' : 'right';
+        }
+
+        function applyHideShow() {
+            if (isHidden) {
+                const dir = getHideDirection();
+                if (dir === 'left') {
+                    btn.style.transform = "translateX(calc(-100% - 100vw))";
+                } else {
+                    btn.style.transform = "translateX(calc(100% + 100vw))";
+                }
+            } else {
+                btn.style.transform = "translateX(0)";
+            }
+        }
+
+        const setButtonBasePosition = (left, top) => {
+            const maxX = window.innerWidth - btn.offsetWidth;
+            const maxY = window.innerHeight - btn.offsetHeight;
+            btnLeft = Math.min(Math.max(0, left), maxX);
+            btnTop = Math.min(Math.max(0, top), maxY);
+            btn.style.left = btnLeft + "px";
+            btn.style.top = btnTop + "px";
+            btn.style.right = "auto";
+            btn.style.bottom = "auto";
+            applyHideShow();
+        };
+
+        if (savedPos && typeof savedPos.left === "number" && typeof savedPos.top === "number") {
+            setButtonBasePosition(savedPos.left, savedPos.top);
+        } else {
+            const defaultLeft = window.innerWidth - btn.offsetWidth - 20;
+            const defaultTop = window.innerHeight - btn.offsetHeight - 20;
+            setButtonBasePosition(defaultLeft, defaultTop);
+            GM_setValue("reader_btn_pos", { left: btnLeft, top: btnTop });
+        }
+
         let startY = 0;
-        window.addEventListener('touchstart', e => startY = e.touches[0].clientY, {passive:true});
+        window.addEventListener('touchstart', e => {
+            startY = e.touches[0].clientY;
+        }, { passive: true });
         window.addEventListener('touchend', e => {
+            if (isDragging) return;
             let diff = startY - e.changedTouches[0].clientY;
             if (Math.abs(diff) > 25) {
-                if (diff < 0) { btn.style.transform = "translateX(0)"; btn.style.opacity = "1"; }
-                else { btn.style.transform = "translateX(60px)"; btn.style.opacity = "0"; }
+                if (diff < 0) {
+                    if (isHidden) {
+                        isHidden = false;
+                        applyHideShow();
+                    }
+                } else {
+                    if (!isHidden) {
+                        isHidden = true;
+                        applyHideShow();
+                    }
+                }
             }
-        }, {passive:true});
+        }, { passive: true });
 
-        // 自动进入阅读模式（排除 article 和 body）
-        if (autoEnterRules[getDomain()]) {
+        let isDragging = false;
+        let dragStartX = 0, dragStartY = 0;
+        let dragStartLeft = 0, dragStartTop = 0;
+        let hasMoved = false;
+        let dragAnimationFrame = null;
+        let longPressTimer = null;
+        let isLongPressed = false;
+        const LONG_PRESS_DURATION = 500;
+        const MOVE_TOLERANCE = 10; // 移动容忍阈值（像素），小于此值不取消长按
+
+        let totalMoveX = 0, totalMoveY = 0; // 累计移动距离
+
+        const clearLongPress = () => {
+            if (longPressTimer) {
+                clearTimeout(longPressTimer);
+                longPressTimer = null;
+            }
+        };
+
+        const onLongPress = () => {
+            isLongPressed = true;
+            showViaConfig();
+        };
+
+        const onDragStart = (e) => {
+            e.stopPropagation();
+            if (isHidden) {
+                isHidden = false;
+                applyHideShow();
+            }
+            const clientX = e.clientX ?? (e.touches ? e.touches[0].clientX : 0);
+            const clientY = e.clientY ?? (e.touches ? e.touches[0].clientY : 0);
+            if (clientX === undefined) return;
+            dragStartX = clientX;
+            dragStartY = clientY;
+            dragStartLeft = btnLeft;
+            dragStartTop = btnTop;
+            isDragging = true;
+            hasMoved = false;
+            isLongPressed = false;
+            totalMoveX = 0;
+            totalMoveY = 0;
+            btn.style.cursor = "grabbing";
+            btn.style.transition = "none";
+            if (e.cancelable) e.preventDefault();
+            document.body.style.userSelect = 'none';
+            clearLongPress();
+            longPressTimer = setTimeout(() => {
+                if (isDragging && !isLongPressed) {
+                    onLongPress();
+                }
+            }, LONG_PRESS_DURATION);
+        };
+
+        const onDragMove = (e) => {
+            if (!isDragging) return;
+            e.preventDefault();
+            e.stopPropagation();
+            let clientX = e.clientX ?? (e.touches ? e.touches[0].clientX : 0);
+            let clientY = e.clientY ?? (e.touches ? e.touches[0].clientY : 0);
+            if (clientX === undefined) return;
+            
+            // 计算本次移动增量
+            let dx = clientX - dragStartX;
+            let dy = clientY - dragStartY;
+            // 更新累计移动距离
+            totalMoveX = dx;
+            totalMoveY = dy;
+            let distance = Math.sqrt(dx*dx + dy*dy);
+            
+            // 如果移动距离超过容忍阈值，才视为真正的拖拽并取消长按
+            if (distance > MOVE_TOLERANCE) {
+                clearLongPress();
+                if (!hasMoved) {
+                    hasMoved = true;
+                    // 如果长按尚未触发，取消长按标记
+                    if (!isLongPressed) {
+                        // 长按定时器已清除，且没有触发长按，允许拖拽移动
+                    }
+                }
+                // 拖拽移动更新按钮位置
+                if (dragAnimationFrame) cancelAnimationFrame(dragAnimationFrame);
+                dragAnimationFrame = requestAnimationFrame(() => {
+                    let newLeft = dragStartLeft + dx;
+                    let newTop = dragStartTop + dy;
+                    setButtonBasePosition(newLeft, newTop);
+                });
+            } else {
+                // 移动未超过阈值，不更新按钮位置，也不取消长按
+                // 但需要确保长按定时器仍然运作
+            }
+        };
+
+        const onDragEnd = (e) => {
+            if (!isDragging) return;
+            clearLongPress();
+            if (dragAnimationFrame) cancelAnimationFrame(dragAnimationFrame);
+            isDragging = false;
+            btn.style.cursor = "grab";
+            btn.style.transition = "transform 0.3s ease";
+            document.body.style.userSelect = '';
+            // 只有真正移动过（超过阈值）才保存位置
+            if (hasMoved) {
+                GM_setValue("reader_btn_pos", { left: btnLeft, top: btnTop });
+            }
+            // 如果没有移动（或移动在阈值内）且未触发长按，则视为单击；如果已触发长按，则不再进入阅读模式
+            if (!hasMoved && !isLongPressed) {
+                enterReaderMode();
+            }
+            hasMoved = false;
+            isLongPressed = false;
+            totalMoveX = 0;
+            totalMoveY = 0;
+        };
+
+        btn.addEventListener("mousedown", onDragStart);
+        window.addEventListener("mousemove", onDragMove);
+        window.addEventListener("mouseup", onDragEnd);
+        btn.addEventListener("touchstart", onDragStart, { passive: false });
+        window.addEventListener("touchmove", onDragMove, { passive: false });
+        window.addEventListener("touchend", onDragEnd);
+        btn.addEventListener("contextmenu", (e) => e.preventDefault());
+
+        window.addEventListener("resize", () => {
+            if (btnLeft !== undefined) {
+                setButtonBasePosition(btnLeft, btnTop);
+                GM_setValue("reader_btn_pos", { left: btnLeft, top: btnTop });
+            }
+        });
+
+        // ========== 自动进入阅读模式（检查 skipAutoEnter 标记）==========
+        if (autoEnterRules[getDomain()] && !skipAutoEnter) {
             function checkAndEnter() {
                 if (document.getElementById("reader-toolbar")) return;
                 const doc = document;
@@ -204,11 +439,11 @@
         }
     }
 
+    // ================== 阅读模式核心功能 ==================
     function enterReaderMode() {
         if (window._readingModeActive) return;
         window._readingModeActive = true;
 
-        // 保存原网页实际使用的正文选择器（排除 article 和 body）
         if (window._savedContentSelector === undefined) {
             const domain = getDomain();
             const rule = customRules[domain] || {};
@@ -294,7 +529,6 @@
                     .toolbar-btn.active {
                         background: #4CAF50;
                     }
-                    /* 退出按钮强制红色 */
                     #exit-btn {
                         color: red !important;
                     }
@@ -325,7 +559,6 @@
                     .font-control-item:active {
                         opacity: 0.7;
                     }
-                    /* 主题面板初始完全隐藏，避免黑点 */
                     #theme-panel {
                         display: none !important;
                         visibility: hidden !important;
@@ -382,7 +615,6 @@
         const exitBtn = document.getElementById("exit-btn");
         const themePanel = document.getElementById("theme-panel");
 
-        // 确保主题面板初始为隐藏
         themePanel.classList.remove("show");
 
         let toolbarVisible = true;
@@ -484,11 +716,17 @@
             applySettings();
         };
         configBtn.onclick = () => showViaConfig();
-        exitBtn.onclick = () => location.reload();
+        
+        // 退出逻辑：使用 GM_setValue 存储手动退出标记
+        exitBtn.onclick = () => {
+            const pageKey = window.location.origin + window.location.pathname;
+            const markKey = 'reader_manual_exit_' + pageKey;
+            GM_setValue(markKey, Date.now());
+            location.reload();
+        };
 
         applySettings();
 
-        // ========== 核心加载逻辑 ==========
         let nextUrl = initialUrl, isLoading = false;
         const displayedUrls = new Set();
         const prefetchedData = new Map();
