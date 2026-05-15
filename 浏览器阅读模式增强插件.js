@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         阅读模式增强插件
 // @namespace    https://viayoo.com/
-// @version      12.23
+// @version      12.24
 // @match        *://*/*
 // @run-at       document-end
 // @grant        GM_setValue
@@ -62,10 +62,31 @@
         input:checked + .toggle-slider { background-color: #4CAF50; }
         input:checked + .toggle-slider:before { transform: translateX(26px); }
         .via-hint { font-size: 11px; color: #888; margin-top: 4px; width: 100%; }
+        .via-btn { display: block; width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 8px; background: #f8f8f8; color: #333; font-size: 14px; cursor: pointer; margin-bottom: 15px; transition: 0.2s; text-align: center; }
+        .via-btn:hover { background: #eee; }
+        .via-btn-primary { background: #4CAF50; color: #fff; border: none; font-weight: bold; }
+        .via-btn-primary:hover { background: #45a049; }
+        .via-back { position: absolute; top: 12px; left: 12px; width: 28px; height: 28px; border-radius: 50%; background: rgba(0,0,0,0.1); display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 18px; color: #666; transition: 0.2s; }
+        .via-back:hover { background: rgba(0,0,0,0.2); color: #000; }
+        .site-list { max-height: 60vh; overflow-y: auto; margin-bottom: 15px; }
+        .site-item { display: flex; align-items: center; padding: 12px 0; border-bottom: 1px solid #eee; }
+        .site-item:last-child { border-bottom: none; }
+        .site-info { flex: 1; min-width: 0; }
+        .site-domain { font-size: 14px; font-weight: bold; color: #333; }
+        .site-detail { font-size: 11px; color: #999; margin-top: 2px; }
+        .site-auto-row { display: flex; align-items: center; gap: 4px; flex-shrink: 0; margin: 0 12px; }
+        .site-auto-label { font-size: 12px; color: #666; white-space: nowrap; }
+        .site-delete-text { font-size: 13px; color: #ff4444; cursor: pointer; flex-shrink: 0; padding: 4px 8px; border-radius: 4px; transition: 0.2s; }
+        .site-delete-text:hover { background: rgba(255,0,0,0.1); }
+        .empty-state { text-align: center; padding: 30px 0; color: #999; font-size: 14px; }
+        .site-count { font-size: 12px; color: #999; margin-bottom: 10px; }
     `;
     GM_addStyle(cfgStyle);
 
     function showViaConfig() {
+        const existingManager = document.getElementById('via-site-manager');
+        if (existingManager) existingManager.remove();
+
         if (document.getElementById('via-cfg-mask')) return;
         const domain = getDomain();
         const rule = customRules[domain] || { title: '', content: '', next: '', filter: '' };
@@ -86,6 +107,7 @@
             <div class="via-box">
                 <div class="via-close">✕</div>
                 <div class="via-title">⚙️ 配置面板 - ${domain}</div>
+                <button class="via-btn via-btn-primary" id="site-manager-btn">📋 网址管理</button>
                 <div class="toggle-switch">
                     <span>点击翻页</span>
                     <label class="toggle-label">
@@ -119,6 +141,7 @@
         const nextInput = document.getElementById('via-n');
         const filterInput = document.getElementById('via-f');
         const closeBtn = mask.querySelector('.via-close');
+        const siteManagerBtn = document.getElementById('site-manager-btn');
 
         function saveCurrentRules() {
             const t = titleInput.value.trim();
@@ -151,6 +174,217 @@
             saveCurrentRules();
             mask.remove();
         };
+
+        siteManagerBtn.onclick = () => {
+            saveCurrentRules();
+            showSiteManager();
+        };
+    }
+
+    function showSiteManager() {
+        const cfgMask = document.getElementById('via-cfg-mask');
+        if (cfgMask) cfgMask.remove();
+
+        if (document.getElementById('via-site-manager')) return;
+
+        const allDomains = new Set();
+        for (let d in customRules) allDomains.add(d);
+        for (let d in autoEnterRules) allDomains.add(d);
+
+        const mask = document.createElement('div');
+        mask.id = 'via-site-manager';
+        mask.style.cssText = 'position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 2147483647; display: flex; align-items: center; justify-content: center; font-family: -apple-system, sans-serif;';
+
+        let siteListHTML = '';
+        if (allDomains.size === 0) {
+            siteListHTML = '<div class="empty-state">📭 暂无已配置的网址</div>';
+        } else {
+            const domains = Array.from(allDomains).sort();
+            domains.forEach(domain => {
+                const rule = customRules[domain] || {};
+                const autoEnabled = !!autoEnterRules[domain];
+                
+                let detailParts = [];
+                if (rule.title) detailParts.push('标题规则');
+                if (rule.content) detailParts.push('正文规则');
+                if (rule.next) detailParts.push('翻页规则');
+                if (rule.filter) detailParts.push('过滤规则');
+                const detail = detailParts.length > 0 ? detailParts.join(' · ') : '';
+
+                siteListHTML += `
+                    <div class="site-item" data-domain="${escapeHtml(domain)}">
+                        <div class="site-info site-domain-clickable" data-domain="${escapeHtml(domain)}">
+                            <div class="site-domain">${escapeHtml(domain)}</div>
+                            ${detail ? `<div class="site-detail">${detail}</div>` : ''}
+                        </div>
+                        <div class="site-auto-row">
+                            <span class="site-auto-label">自动阅读</span>
+                            <label class="toggle-label">
+                                <input type="checkbox" class="site-auto-toggle" data-domain="${escapeHtml(domain)}" ${autoEnabled ? 'checked' : ''}>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                        <span class="site-delete-text" data-domain="${escapeHtml(domain)}">删除</span>
+                    </div>`;
+            });
+        }
+
+        mask.innerHTML = `
+            <div class="via-box" style="max-width: 420px;">
+                <div class="via-back" id="site-manager-back">←</div>
+                <div class="via-close" id="site-manager-close">✕</div>
+                <div class="via-title" style="padding-left: 30px;">📋 网址管理</div>
+                <div class="site-count">共 ${allDomains.size} 个网址</div>
+                <div class="site-list">${siteListHTML}</div>
+                <button class="via-btn" id="clear-all-btn" style="color:#ff4444; border-color:#ff4444;">🗑️ 清空全部配置</button>
+            </div>`;
+        document.body.appendChild(mask);
+
+        document.getElementById('site-manager-back').onclick = () => {
+            mask.remove();
+            showViaConfig();
+        };
+
+        document.getElementById('site-manager-close').onclick = () => {
+            mask.remove();
+        };
+
+        mask.querySelectorAll('.site-auto-toggle').forEach(toggle => {
+            toggle.onchange = () => {
+                const domain = toggle.getAttribute('data-domain');
+                autoEnterRules[domain] = toggle.checked;
+                saveAutoEnter();
+            };
+        });
+
+        mask.querySelectorAll('.site-domain-clickable').forEach(el => {
+            el.style.cursor = 'pointer';
+            el.onclick = () => {
+                const domain = el.getAttribute('data-domain');
+                mask.remove();
+                showViaConfigForDomain(domain);
+            };
+        });
+
+        mask.querySelectorAll('.site-delete-text').forEach(btn => {
+            btn.onclick = (e) => {
+                e.stopPropagation();
+                const domain = btn.getAttribute('data-domain');
+                if (confirm(`确定要删除 ${domain} 的所有配置吗？`)) {
+                    delete customRules[domain];
+                    delete autoEnterRules[domain];
+                    saveRules();
+                    saveAutoEnter();
+                    mask.remove();
+                    showSiteManager();
+                }
+            };
+        });
+
+        document.getElementById('clear-all-btn').onclick = () => {
+            if (confirm('确定要清空所有网址的配置吗？此操作不可恢复！')) {
+                customRules = {};
+                autoEnterRules = {};
+                saveRules();
+                saveAutoEnter();
+                mask.remove();
+                showSiteManager();
+            }
+        };
+    }
+
+    function showViaConfigForDomain(targetDomain) {
+        const cfgMask = document.getElementById('via-cfg-mask');
+        if (cfgMask) cfgMask.remove();
+
+        const rule = customRules[targetDomain] || { title: '', content: '', next: '', filter: '' };
+        const autoEnterEnabled = !!autoEnterRules[targetDomain];
+
+        let effectivePlaceholder = '';
+        if (rule.content) {
+            effectivePlaceholder = '自定义';
+        } else {
+            effectivePlaceholder = '空';
+        }
+
+        const mask = document.createElement('div');
+        mask.id = 'via-cfg-mask';
+        mask.innerHTML = `
+            <div class="via-box">
+                <div class="via-close">✕</div>
+                <div class="via-title">⚙️ 配置面板 - ${escapeHtml(targetDomain)}</div>
+                <button class="via-btn via-btn-primary" id="site-manager-btn">📋 网址管理</button>
+                <div class="toggle-switch">
+                    <span>点击翻页</span>
+                    <label class="toggle-label">
+                        <input type="checkbox" id="click-page-toggle" ${settings.clickPage ? 'checked' : ''}>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="toggle-switch">
+                    <span>自动进入阅读模式</span>
+                    <label class="toggle-label">
+                        <input type="checkbox" id="auto-enter-toggle" ${autoEnterEnabled ? 'checked' : ''}>
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <div class="via-hint">自动阅读模式已匹配大部分规则，非正文误判请自定义正文选择器来规避</div>
+                </div>
+                <span class="via-label">章节标题选择器</span>
+                <input type="text" id="via-t" class="via-input" placeholder=".chapter-title" value="${escapeHtml(rule.title || '')}">
+                <span class="via-label">正文内容选择器</span>
+                <input type="text" id="via-c" class="via-input" placeholder="${effectivePlaceholder}" value="${escapeHtml(rule.content || '')}">
+                <span class="via-label">下一页选择器</span>
+                <input type="text" id="via-n" class="via-input" placeholder=".next-page" value="${escapeHtml(rule.next || '')}">
+                <span class="via-label">过滤选择器（与内置规则同时生效）</span>
+                <input type="text" id="via-f" class="via-input" placeholder=".ad, .banner, .tips, .share" value="${escapeHtml(rule.filter || '')}">
+            </div>`;
+        document.body.appendChild(mask);
+
+        const clickPageToggle = document.getElementById('click-page-toggle');
+        const autoEnterToggle = document.getElementById('auto-enter-toggle');
+        const titleInput = document.getElementById('via-t');
+        const contentInput = document.getElementById('via-c');
+        const nextInput = document.getElementById('via-n');
+        const filterInput = document.getElementById('via-f');
+        const closeBtn = mask.querySelector('.via-close');
+        const siteManagerBtn = document.getElementById('site-manager-btn');
+
+        function saveCurrentRules() {
+            const t = titleInput.value.trim();
+            const c = contentInput.value.trim();
+            const n = nextInput.value.trim();
+            const f = filterInput.value.trim();
+            if (!t && !c && !n && !f) {
+                delete customRules[targetDomain];
+            } else {
+                customRules[targetDomain] = { title: t, content: c, next: n, filter: f };
+            }
+            saveRules();
+        }
+
+        clickPageToggle.onchange = () => {
+            settings.clickPage = clickPageToggle.checked;
+            saveSettings();
+        };
+        autoEnterToggle.onchange = () => {
+            autoEnterRules[targetDomain] = autoEnterToggle.checked;
+            saveAutoEnter();
+        };
+
+        titleInput.addEventListener('blur', saveCurrentRules);
+        contentInput.addEventListener('blur', saveCurrentRules);
+        nextInput.addEventListener('blur', saveCurrentRules);
+        filterInput.addEventListener('blur', saveCurrentRules);
+
+        closeBtn.onclick = () => {
+            saveCurrentRules();
+            mask.remove();
+        };
+
+        siteManagerBtn.onclick = () => {
+            saveCurrentRules();
+            showSiteManager();
+        };
     }
 
     function escapeHtml(str) {
@@ -164,14 +398,13 @@
 
     GM_registerMenuCommand("⚙️ 配置面板", showViaConfig);
 
-    // ================== 手动退出标记处理（使用 GM_setValue）==================
+    // ================== 手动退出标记处理 ==================
     const getPageKey = () => {
         return window.location.origin + window.location.pathname;
     };
     const manualExitKey = 'reader_manual_exit_' + getPageKey();
     const exitFlag = GM_getValue(manualExitKey, 0);
     const now = Date.now();
-    // 如果标记存在且在 3 秒内（避免旧残留），则跳过自动进入
     if (exitFlag && (now - exitFlag < 3000)) {
         GM_setValue(manualExitKey, 0);
         var skipAutoEnter = true;
@@ -181,7 +414,7 @@
         var skipAutoEnter = false;
     }
 
-    // ================== 创建可拖拽的阅读按钮（增加移动容忍阈值）==================
+    // ================== 创建阅读按钮 ==================
     if (!document.getElementById("txtyd")) {
         const btn = document.createElement("div");
         btn.id = "txtyd";
@@ -189,14 +422,6 @@
         btn.style.cssText = `
             position: fixed;
             z-index: 2147483647;
-            width: 45px;
-            height: 45px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: rgba(0,0,0,0.5);
-            color: #fff;
-            border-radius: 50%;
             cursor: grab;
             font-size: 28px;
             user-select: none;
@@ -244,8 +469,8 @@
         if (savedPos && typeof savedPos.left === "number" && typeof savedPos.top === "number") {
             setButtonBasePosition(savedPos.left, savedPos.top);
         } else {
-            const defaultLeft = window.innerWidth - btn.offsetWidth - 20;
-            const defaultTop = window.innerHeight - btn.offsetHeight - 20;
+            const defaultLeft = window.innerWidth - 45 - 20;
+            const defaultTop = window.innerHeight - 45 - 20;
             setButtonBasePosition(defaultLeft, defaultTop);
             GM_setValue("reader_btn_pos", { left: btnLeft, top: btnTop });
         }
@@ -280,9 +505,9 @@
         let longPressTimer = null;
         let isLongPressed = false;
         const LONG_PRESS_DURATION = 500;
-        const MOVE_TOLERANCE = 10; // 移动容忍阈值（像素），小于此值不取消长按
+        const MOVE_TOLERANCE = 10;
 
-        let totalMoveX = 0, totalMoveY = 0; // 累计移动距离
+        let totalMoveX = 0, totalMoveY = 0;
 
         const clearLongPress = () => {
             if (longPressTimer) {
@@ -334,34 +559,23 @@
             let clientY = e.clientY ?? (e.touches ? e.touches[0].clientY : 0);
             if (clientX === undefined) return;
             
-            // 计算本次移动增量
             let dx = clientX - dragStartX;
             let dy = clientY - dragStartY;
-            // 更新累计移动距离
             totalMoveX = dx;
             totalMoveY = dy;
             let distance = Math.sqrt(dx*dx + dy*dy);
             
-            // 如果移动距离超过容忍阈值，才视为真正的拖拽并取消长按
             if (distance > MOVE_TOLERANCE) {
                 clearLongPress();
                 if (!hasMoved) {
                     hasMoved = true;
-                    // 如果长按尚未触发，取消长按标记
-                    if (!isLongPressed) {
-                        // 长按定时器已清除，且没有触发长按，允许拖拽移动
-                    }
                 }
-                // 拖拽移动更新按钮位置
                 if (dragAnimationFrame) cancelAnimationFrame(dragAnimationFrame);
                 dragAnimationFrame = requestAnimationFrame(() => {
                     let newLeft = dragStartLeft + dx;
                     let newTop = dragStartTop + dy;
                     setButtonBasePosition(newLeft, newTop);
                 });
-            } else {
-                // 移动未超过阈值，不更新按钮位置，也不取消长按
-                // 但需要确保长按定时器仍然运作
             }
         };
 
@@ -373,11 +587,9 @@
             btn.style.cursor = "grab";
             btn.style.transition = "transform 0.3s ease";
             document.body.style.userSelect = '';
-            // 只有真正移动过（超过阈值）才保存位置
             if (hasMoved) {
                 GM_setValue("reader_btn_pos", { left: btnLeft, top: btnTop });
             }
-            // 如果没有移动（或移动在阈值内）且未触发长按，则视为单击；如果已触发长按，则不再进入阅读模式
             if (!hasMoved && !isLongPressed) {
                 enterReaderMode();
             }
@@ -402,7 +614,6 @@
             }
         });
 
-        // ========== 自动进入阅读模式（检查 skipAutoEnter 标记）==========
         if (autoEnterRules[getDomain()] && !skipAutoEnter) {
             function checkAndEnter() {
                 if (document.getElementById("reader-toolbar")) return;
@@ -717,7 +928,6 @@
         };
         configBtn.onclick = () => showViaConfig();
         
-        // 退出逻辑：使用 GM_setValue 存储手动退出标记
         exitBtn.onclick = () => {
             const pageKey = window.location.origin + window.location.pathname;
             const markKey = 'reader_manual_exit_' + pageKey;
