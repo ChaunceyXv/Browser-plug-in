@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         阅读模式增强插件
 // @namespace    https://viayoo.com/
-// @version      12.27.8
+// @version      12.27.9
 // @match        *://*/*
 // @run-at       document-end
 // @grant        GM_setValue
@@ -148,7 +148,7 @@
         if (rule.content) {
             contentPlaceholder = '自定义';
         } else if (window._savedContentSelector) {
-            contentPlaceholder = window._savedContentSelector;   // 不加“示例：”
+            contentPlaceholder = window._savedContentSelector;
         } else {
             contentPlaceholder = '示例：#content, .article-content, [id^="cont"]';
         }
@@ -563,8 +563,7 @@
                 const contentSelectors = [
                     "#chaptercontent", "#nr", "#content", ".content", ".page-content",
                     "#contentn", ".txtnav", ".isTxt.chapter-content", ".con", "#novelcontent",
-                    ".read-content", ".article-content", ".chapterCon",
-                    '[id^="cont"]'
+                    ".read-content", ".article-content", ".chapterCon"
                 ];
                 for (let s of contentSelectors) {
                     let node = document.querySelector(s);
@@ -598,8 +597,7 @@
                 const contentSelectors = [
                     "#chaptercontent", "#nr", "#content", ".content", ".page-content",
                     "#contentn", ".txtnav", ".isTxt.chapter-content", ".con", "#novelcontent",
-                    ".read-content", ".article-content", ".chapterCon",
-                    '[id^="cont"]'
+                    ".read-content", ".article-content", ".chapterCon"
                 ];
                 for (let s of contentSelectors) {
                     let node = document.querySelector(s);
@@ -975,7 +973,7 @@
             }
         }
 
-        function extractContentFromDoc(doc, rule) {
+        function extractContentFromDoc(doc, rule, customContentSelector = false) {
             let title = "";
             const titleSelectors = rule.title ? [rule.title] : [".nr_title", "h1.title", "h1", ".content-title"];
             for (let ts of titleSelectors) {
@@ -991,25 +989,51 @@
                 "#chaptercontent", "#nr", "#content", ".content", ".page-content",
                 "#contentn", ".txtnav", ".isTxt.chapter-content", ".con", "#novelcontent",
                 ".read-content", ".article-content", ".chapterCon",
-                '[id^="cont"]', "article", "body"
+                "article", "body"
             ];
-            let foundNode = null;
-            for (let s of contentSelectors) {
-                foundNode = doc.querySelector(s);
-                if (foundNode && foundNode.innerText.length > 200) break;
-            }
-            if (foundNode) {
-                const clone = foundNode.cloneNode(true);
-                const baseRemoveSel = "script, style, ins, .ads, iframe, table";
-                const customFilter = rule.filter ? rule.filter.trim() : "";
-                let removeSel = baseRemoveSel;
-                if (customFilter) removeSel = `${baseRemoveSel}, ${customFilter}`;
-                clone.querySelectorAll(removeSel).forEach(el => el.remove());
-                clone.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
-                clone.querySelectorAll('div,p').forEach(el => { el.prepend('\n'); el.append('\n'); });
-                mainHTML = clone.innerText.replace(/\r\n|\r/g, "\n").split("\n")
-                    .map(l => l.trim()).filter(l => l.length > 0)
-                    .map(l => `<p>${escapeHtml(l)}</p>`).join("");
+
+            if (customContentSelector) {
+                // 自定义规则：合并所有匹配项
+                for (let s of contentSelectors) {
+                    const nodes = doc.querySelectorAll(s);
+                    for (const node of nodes) {
+                        if (node && node.innerText.length > 200) {
+                            const clone = node.cloneNode(true);
+                            const baseRemoveSel = "script, style, ins, .ads, iframe, table";
+                            const customFilter = rule.filter ? rule.filter.trim() : "";
+                            let removeSel = baseRemoveSel;
+                            if (customFilter) removeSel = `${baseRemoveSel}, ${customFilter}`;
+                            clone.querySelectorAll(removeSel).forEach(el => el.remove());
+                            clone.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
+                            clone.querySelectorAll('div,p').forEach(el => { el.prepend('\n'); el.append('\n'); });
+                            const text = clone.innerText.replace(/\r\n|\r/g, "\n").split("\n")
+                                .map(l => l.trim()).filter(l => l.length > 0)
+                                .map(l => `<p>${escapeHtml(l)}</p>`).join("");
+                            mainHTML += text;
+                        }
+                    }
+                    if (mainHTML) break;
+                }
+            } else {
+                // 默认行为：只取第一个匹配的选择器
+                let foundNode = null;
+                for (let s of contentSelectors) {
+                    foundNode = doc.querySelector(s);
+                    if (foundNode && foundNode.innerText.length > 200) break;
+                }
+                if (foundNode) {
+                    const clone = foundNode.cloneNode(true);
+                    const baseRemoveSel = "script, style, ins, .ads, iframe, table";
+                    const customFilter = rule.filter ? rule.filter.trim() : "";
+                    let removeSel = baseRemoveSel;
+                    if (customFilter) removeSel = `${baseRemoveSel}, ${customFilter}`;
+                    clone.querySelectorAll(removeSel).forEach(el => el.remove());
+                    clone.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
+                    clone.querySelectorAll('div,p').forEach(el => { el.prepend('\n'); el.append('\n'); });
+                    mainHTML = clone.innerText.replace(/\r\n|\r/g, "\n").split("\n")
+                        .map(l => l.trim()).filter(l => l.length > 0)
+                        .map(l => `<p>${escapeHtml(l)}</p>`).join("");
+                }
             }
             return { title, mainHTML };
         }
@@ -1038,7 +1062,8 @@
                 }
                 
                 const rule = getRuleForUrl(url);
-                const { title, mainHTML } = extractContentFromDoc(doc, rule);
+                const isCustomContent = !!rule.content;
+                const { title, mainHTML } = extractContentFromDoc(doc, rule, isCustomContent);
                 if (mainHTML.length < 100 && url !== initialUrl) throw new Error("内容过短");
                 let newNextUrl = "";
                 
