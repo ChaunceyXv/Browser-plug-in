@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         阅读模式增强插件
 // @namespace    https://viayoo.com/
-// @version      12.27.12
+// @version      12.27.17
 // @match        *://*/*
 // @run-at       document-end
 // @grant        GM_setValue
@@ -984,11 +984,11 @@
             ];
 
             if (customContentSelector) {
-                // 自定义规则：合并所有匹配项，不限制字数
+                // 自定义规则：合并所有匹配项，限制字数 >200
                 for (let s of contentSelectors) {
                     const nodes = doc.querySelectorAll(s);
                     for (const node of nodes) {
-                        if (node) {  // 只要节点存在就提取，不检查长度
+                        if (node && node.innerText.length > 200) {
                             const clone = node.cloneNode(true);
                             const baseRemoveSel = "script, style, ins, .ads, iframe, table";
                             const customFilter = rule.filter ? rule.filter.trim() : "";
@@ -1006,7 +1006,7 @@
                     if (mainHTML) break;
                 }
             } else {
-                // 默认行为：只取第一个匹配的选择器（限制字数 >200）
+                // 默认行为：只取第一个匹配的选择器，限制字数 >200
                 let foundNode = null;
                 for (let s of contentSelectors) {
                     foundNode = doc.querySelector(s);
@@ -1055,8 +1055,8 @@
                 const rule = getRuleForUrl(url);
                 const isCustomContent = !!rule.content;
                 const { title, mainHTML } = extractContentFromDoc(doc, rule, isCustomContent);
-                // 只有非自定义规则且非首页时才检查短内容
-                if (!isCustomContent && mainHTML.length < 100 && url !== initialUrl) throw new Error("内容过短");
+                
+                // 先查找下一页链接（无论正文是否为空，都尝试翻页）
                 let newNextUrl = "";
                 
                 // 1. 自定义规则（最高优先级）
@@ -1128,9 +1128,13 @@
                     }
                 }
                 
-                const sec = document.createElement("div");
-                sec.innerHTML = `<div class="chapter-title">${escapeHtml(title)}</div>${mainHTML}`;
-                contentArea.appendChild(sec);
+                // 移除短内容检查（不再抛出异常，短内容正常显示）
+                // 只有正文非空时才显示标题和内容，避免空标题
+                if (mainHTML) {
+                    const sec = document.createElement("div");
+                    sec.innerHTML = `<div class="chapter-title">${escapeHtml(title)}</div>${mainHTML}`;
+                    contentArea.appendChild(sec);
+                }
                 if (url !== initialUrl) history.pushState(null, originalTitle, url);
                 applySettings();
                 displayedUrls.add(url);
