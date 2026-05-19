@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         阅读模式增强插件
 // @namespace    https://viayoo.com/
-// @version      12.27.9
+// @version      12.27.12
 // @match        *://*/*
 // @run-at       document-end
 // @grant        GM_setValue
@@ -602,16 +602,7 @@
                 for (let s of contentSelectors) {
                     let node = document.querySelector(s);
                     if (node && node.innerText.length > 200 && node !== document.body) {
-                        if (s === '[id^="cont"]') {
-                            const id = node.id;
-                            if (id && (id === "content" || id === "container" || id === "cont")) {
-                                effectiveSelector = `#${id}`;
-                            } else {
-                                effectiveSelector = s;
-                            }
-                        } else {
-                            effectiveSelector = s;
-                        }
+                        effectiveSelector = s;
                         break;
                     }
                 }
@@ -993,11 +984,11 @@
             ];
 
             if (customContentSelector) {
-                // 自定义规则：合并所有匹配项
+                // 自定义规则：合并所有匹配项，不限制字数
                 for (let s of contentSelectors) {
                     const nodes = doc.querySelectorAll(s);
                     for (const node of nodes) {
-                        if (node && node.innerText.length > 200) {
+                        if (node) {  // 只要节点存在就提取，不检查长度
                             const clone = node.cloneNode(true);
                             const baseRemoveSel = "script, style, ins, .ads, iframe, table";
                             const customFilter = rule.filter ? rule.filter.trim() : "";
@@ -1015,7 +1006,7 @@
                     if (mainHTML) break;
                 }
             } else {
-                // 默认行为：只取第一个匹配的选择器
+                // 默认行为：只取第一个匹配的选择器（限制字数 >200）
                 let foundNode = null;
                 for (let s of contentSelectors) {
                     foundNode = doc.querySelector(s);
@@ -1064,7 +1055,8 @@
                 const rule = getRuleForUrl(url);
                 const isCustomContent = !!rule.content;
                 const { title, mainHTML } = extractContentFromDoc(doc, rule, isCustomContent);
-                if (mainHTML.length < 100 && url !== initialUrl) throw new Error("内容过短");
+                // 只有非自定义规则且非首页时才检查短内容
+                if (!isCustomContent && mainHTML.length < 100 && url !== initialUrl) throw new Error("内容过短");
                 let newNextUrl = "";
                 
                 // 1. 自定义规则（最高优先级）
