@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         阅读模式增强插件
 // @namespace    https://viayoo.com/
-// @version      12.27.3
+// @version      12.27.8
 // @match        *://*/*
 // @run-at       document-end
 // @grant        GM_setValue
@@ -92,7 +92,7 @@
         .via-close { position: absolute; top: 12px; right: 12px; width: 28px; height: 28px; border-radius: 50%; background: rgba(0,0,0,0.1); display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 18px; color: #666; transition: 0.2s; }
         .via-close:hover { background: rgba(0,0,0,0.2); color: #000; }
         .via-label { font-size: 13px; color: #666; display: block; margin-bottom: 5px; }
-        .via-input { width: 100%; border: 1px solid #ddd; border-radius: 6px; padding: 8px 10px; margin-bottom: 15px; font-size: 14px; box-sizing: border-box; outline: none; }
+        .via-input { width: 100%; border: 1px solid #ddd; border-radius: 6px; padding: 8px 10px; margin-bottom: 15px; font-size: 10px; box-sizing: border-box; outline: none; }
         .toggle-switch { display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; flex-wrap: wrap; }
         .toggle-switch span { font-size: 14px; color: #333; }
         .toggle-label { position: relative; display: inline-block; width: 50px; height: 24px; }
@@ -143,13 +143,14 @@
         const rule = customRules[domain] || { title: '', content: '', next: '', filter: '' };
         const autoEnterEnabled = !!autoEnterRules[domain];
 
-        let effectivePlaceholder = '';
+        // 正文内容选择器的 placeholder 逻辑
+        let contentPlaceholder = '';
         if (rule.content) {
-            effectivePlaceholder = '自定义';
+            contentPlaceholder = '自定义';
         } else if (window._savedContentSelector) {
-            effectivePlaceholder = window._savedContentSelector;
+            contentPlaceholder = window._savedContentSelector;   // 不加“示例：”
         } else {
-            effectivePlaceholder = '空';
+            contentPlaceholder = '示例：#content, .article-content, [id^="cont"]';
         }
 
         const mask = document.createElement('div');
@@ -175,13 +176,13 @@
                     <div class="via-hint">自动阅读模式已匹配大部分规则，非正文误判请自定义正文选择器来规避</div>
                 </div>
                 <span class="via-label">章节标题选择器</span>
-                <input type="text" id="via-t" class="via-input" placeholder=".chapter-title" value="${escapeHtml(rule.title || '')}">
+                <input type="text" id="via-t" class="via-input" placeholder="示例：.chapter-title" value="${escapeHtml(rule.title || '')}">
                 <span class="via-label">正文内容选择器</span>
-                <input type="text" id="via-c" class="via-input" placeholder="${effectivePlaceholder}" value="${escapeHtml(rule.content || '')}">
+                <input type="text" id="via-c" class="via-input" placeholder="${contentPlaceholder}" value="${escapeHtml(rule.content || '')}">
                 <span class="via-label">下一页选择器</span>
-                <input type="text" id="via-n" class="via-input" placeholder=".next-page" value="${escapeHtml(rule.next || '')}">
+                <input type="text" id="via-n" class="via-input" placeholder="示例：.next-page 或 regex:第\\s*[\\d一二三]+\\s*节" value="${escapeHtml(rule.next || '')}">
                 <span class="via-label">过滤选择器（与内置规则同时生效）</span>
-                <input type="text" id="via-f" class="via-input" placeholder=".ad, .banner, .tips, .share" value="${escapeHtml(rule.filter || '')}">
+                <input type="text" id="via-f" class="via-input" placeholder="示例：.ad, .banner, .tips, .share" value="${escapeHtml(rule.filter || '')}">
             </div>`;
         document.body.appendChild(mask);
 
@@ -899,12 +900,38 @@
             
             const rule = getRuleForUrl(startUrl);
             let newNextUrl = "";
+            
+            // 1. 自定义规则（最高优先级）
             if (rule.next) {
-                let el = doc.querySelector(rule.next);
-                if (el && el.tagName === 'A' && el.href && !el.href.startsWith("javascript:")) {
-                    newNextUrl = el.href;
+                let nextSelector = rule.next;
+                let useRegex = false;
+                let regexPattern = null;
+                if (nextSelector.startsWith('regex:')) {
+                    useRegex = true;
+                    try {
+                        regexPattern = new RegExp(nextSelector.slice(6), 'i');
+                    } catch(e) { console.error("正则无效", e); }
+                }
+                
+                if (useRegex && regexPattern) {
+                    const allLinks = doc.querySelectorAll('a');
+                    for (let a of allLinks) {
+                        if (regexPattern.test(a.innerText) || regexPattern.test(a.href)) {
+                            if (a.href && !a.href.startsWith("javascript:")) {
+                                newNextUrl = new URL(a.href, startUrl).href;
+                                break;
+                            }
+                        }
+                    }
+                } else {
+                    let el = doc.querySelector(nextSelector);
+                    if (el && el.tagName === 'A' && el.href && !el.href.startsWith("javascript:")) {
+                        newNextUrl = new URL(el.href, startUrl).href;
+                    }
                 }
             }
+            
+            // 2. 内置文本正则匹配（第二优先级）
             if (!newNextUrl) {
                 const allLinks = doc.querySelectorAll("a");
                 const nextReg = /下一页|下页|下一章|下章|下一篇|后一页|后一章|next|下一頁|下頁|後一頁|後一章/i;
@@ -918,6 +945,31 @@
                     }
                 }
             }
+            
+            // 3. 属性选择器（第三优先级，作为兜底）
+            if (!newNextUrl) {
+                const fallbackSelectors = [
+                    'link[rel="next"]',
+                    'a[rel="next"]',
+                    'a[class*="next"]',
+                    'a[class*="pager"]',
+                    'a[aria-label*="next" i]',
+                    'a[data-page*="next" i]'
+                ];
+                for (let sel of fallbackSelectors) {
+                    let el;
+                    if (sel === 'link[rel="next"]') {
+                        el = doc.head.querySelector(sel);
+                    } else {
+                        el = doc.querySelector(sel);
+                    }
+                    if (el && el.href && !el.href.startsWith("javascript:")) {
+                        newNextUrl = new URL(el.href, startUrl).href;
+                        break;
+                    }
+                }
+            }
+            
             if (newNextUrl && depth > 1) {
                 prefetchChain(newNextUrl, depth-1).catch(e => console.error("预加载链中断", e));
             }
@@ -989,12 +1041,38 @@
                 const { title, mainHTML } = extractContentFromDoc(doc, rule);
                 if (mainHTML.length < 100 && url !== initialUrl) throw new Error("内容过短");
                 let newNextUrl = "";
+                
+                // 1. 自定义规则（最高优先级）
                 if (rule.next) {
-                    let el = doc.querySelector(rule.next);
-                    if (el && el.tagName === 'A' && el.href && !el.href.startsWith("javascript:")) {
-                        newNextUrl = el.href;
+                    let nextSelector = rule.next;
+                    let useRegex = false;
+                    let regexPattern = null;
+                    if (nextSelector.startsWith('regex:')) {
+                        useRegex = true;
+                        try {
+                            regexPattern = new RegExp(nextSelector.slice(6), 'i');
+                        } catch(e) { console.error("正则无效", e); }
+                    }
+                    
+                    if (useRegex && regexPattern) {
+                        const allLinks = doc.querySelectorAll('a');
+                        for (let a of allLinks) {
+                            if (regexPattern.test(a.innerText) || regexPattern.test(a.href)) {
+                                if (a.href && !a.href.startsWith("javascript:")) {
+                                    newNextUrl = new URL(a.href, url).href;
+                                    break;
+                                }
+                            }
+                        }
+                    } else {
+                        let el = doc.querySelector(nextSelector);
+                        if (el && el.tagName === 'A' && el.href && !el.href.startsWith("javascript:")) {
+                            newNextUrl = new URL(el.href, url).href;
+                        }
                     }
                 }
+                
+                // 2. 内置文本正则匹配（第二优先级）
                 if (!newNextUrl) {
                     const allLinks = doc.querySelectorAll("a");
                     const nextReg = /下一页|下页|下一章|下章|下一篇|后一页|后一章|next|下一頁|下頁|後一頁|後一章/i;
@@ -1008,6 +1086,31 @@
                         }
                     }
                 }
+                
+                // 3. 属性选择器（第三优先级，作为兜底）
+                if (!newNextUrl) {
+                    const fallbackSelectors = [
+                        'link[rel="next"]',
+                        'a[rel="next"]',
+                        'a[class*="next"]',
+                        'a[class*="pager"]',
+                        'a[aria-label*="next" i]',
+                        'a[data-page*="next" i]'
+                    ];
+                    for (let sel of fallbackSelectors) {
+                        let el;
+                        if (sel === 'link[rel="next"]') {
+                            el = doc.head.querySelector(sel);
+                        } else {
+                            el = doc.querySelector(sel);
+                        }
+                        if (el && el.href && !el.href.startsWith("javascript:")) {
+                            newNextUrl = new URL(el.href, url).href;
+                            break;
+                        }
+                    }
+                }
+                
                 const sec = document.createElement("div");
                 sec.innerHTML = `<div class="chapter-title">${escapeHtml(title)}</div>${mainHTML}`;
                 contentArea.appendChild(sec);
