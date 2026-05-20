@@ -150,7 +150,7 @@
         } else if (window._savedContentSelector) {
             contentPlaceholder = window._savedContentSelector;
         } else {
-            contentPlaceholder = '示例：#content, .article-content, [id^="cont"]';
+            contentPlaceholder = '示例：#content, .article-content, [id^=&quot;cont&quot;]';
         }
 
         const mask = document.createElement('div');
