@@ -198,7 +198,7 @@
                     toolbarElement.style.pointerEvents = 'none';
                 }
             }
-        }, 3000);
+        }, 1000); // 修改为 1 秒
     }
 
     function showToolbar(permanent = false) {
