@@ -367,7 +367,7 @@
 
         const savedPos = GM_getValue("reader_btn_pos", null);
         let btnLeft = 0, btnTop = 0;
-        let isHidden = false;
+        let isHidden =true;
 
         function getHideDirection() {
             const rect = btn.getBoundingClientRect();
