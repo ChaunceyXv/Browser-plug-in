@@ -1,21 +1,129 @@
 // ==UserScript==
-// @name         阅读模式增强插件
+// @name         阅读模式增强插件 (含翻译)
 // @namespace    https://viayoo.com/
-// @version      12.27.17
+// @version      12.28.4
 // @match        *://*/*
 // @run-at       document-end
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_registerMenuCommand
 // @grant        GM_addStyle
+// @grant        GM_xmlhttpRequest
+// @connect      edge.microsoft.com
+// @connect      api.cognitive.microsofttranslator.com
 // ==/UserScript==
 
 (function() {
     'use strict';
 
+    // ==================== 翻译模块 ====================
+    const TOKEN_EXPIRY = 8 * 60 * 1000;
+
+    let token = null;
+    let tokenPromise = null;
+    let tokenExpireTime = 0;
+
+    // 启动时立即获取 Token
+    getToken();
+
+    function getToken() {
+        const now = Date.now();
+        
+        if (token && now < tokenExpireTime) {
+            return Promise.resolve(token);
+        }
+        
+        if (tokenPromise) {
+            return tokenPromise;
+        }
+        
+        if (token && now >= tokenExpireTime) {
+            token = null;
+        }
+        
+        tokenPromise = new Promise((resolve) => {
+            GM_xmlhttpRequest({
+                method: 'GET',
+                url: 'https://edge.microsoft.com/translate/auth',
+                timeout: 5000,
+                onload(r) {
+                    if (r.status === 200) {
+                        token = r.responseText;
+                        tokenExpireTime = Date.now() + TOKEN_EXPIRY;
+                    } else {
+                        token = null;
+                        tokenExpireTime = 0;
+                    }
+                    tokenPromise = null;
+                    resolve(token);
+                },
+                onerror() {
+                    token = null;
+                    tokenExpireTime = 0;
+                    tokenPromise = null;
+                    resolve(null);
+                },
+                ontimeout() {
+                    token = null;
+                    tokenExpireTime = 0;
+                    tokenPromise = null;
+                    resolve(null);
+                }
+            });
+        });
+        
+        return tokenPromise;
+    }
+
+    function refreshToken() {
+        token = null;
+        tokenExpireTime = 0;
+        tokenPromise = null;
+        return getToken();
+    }
+
+    function translateHTML(html, retryCount = 0) {
+        return new Promise(resolve => {
+            GM_xmlhttpRequest({
+                method: 'POST',
+                url: 'https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&to=zh-Hans&textType=html',
+                headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                data: JSON.stringify([{ Text: html }]),
+                timeout: 15000,
+                onload(r) {
+                    if (r.status === 200) {
+                        try {
+                            resolve(JSON.parse(r.responseText)[0].translations[0].text);
+                        } catch(e) {
+                            resolve(null);
+                        }
+                    } else if (r.status === 401 || r.status === 403) {
+                        if (retryCount < 3) {
+                            refreshToken().then(newToken => {
+                                if (newToken) {
+                                    resolve(translateHTML(html, retryCount + 1));
+                                } else {
+                                    resolve(null);
+                                }
+                            });
+                        } else {
+                            resolve(null);
+                        }
+                    } else {
+                        resolve(null);
+                    }
+                },
+                onerror() { resolve(null); },
+                ontimeout() { resolve(null); }
+            });
+        });
+    }
+
+    // ==================== 存储管理 ====================
     const STORAGE_KEY = "reader_mode_settings";
     const CUSTOM_RULES_KEY = "reader_custom_rules";
     const AUTO_ENTER_KEY = "auto_enter_rules";
+    const AUTO_TRANSLATE_KEY = "auto_translate_rules";
 
     let settings = GM_getValue(STORAGE_KEY, {
         fontSize: 16,
@@ -25,6 +133,7 @@
 
     let customRules = GM_getValue(CUSTOM_RULES_KEY, {});
     let autoEnterRules = GM_getValue(AUTO_ENTER_KEY, {});
+    let autoTranslateRules = GM_getValue(AUTO_TRANSLATE_KEY, {});
 
     const themes = "#e3edcd-#000;#fce4ec-#880e4f;#CCE2BF-green;#e0f2f1-#004d40;#494949-#C1C1C1;#1a1c23-#c6c7c8;#000000-#bbbbbb;#C7EDCC-#000;#DCECD2-#000;#f4f0e9-#333;#ffffff-#000;#f4f0e9-#333-paper";
     const themeNames = ["浅米绿","浅粉红","浅绿","浅青绿","深灰夜","蓝灰夜","纯黑夜","淡绿","淡黄绿","米白纸","纯白","仿纸纹理"];
@@ -32,6 +141,7 @@
     function saveSettings() { GM_setValue(STORAGE_KEY, settings); }
     function saveRules() { GM_setValue(CUSTOM_RULES_KEY, customRules); }
     function saveAutoEnter() { GM_setValue(AUTO_ENTER_KEY, autoEnterRules); }
+    function saveAutoTranslate() { GM_setValue(AUTO_TRANSLATE_KEY, autoTranslateRules); }
     
     function getDomain() { 
         const hostname = window.location.hostname;
@@ -55,7 +165,6 @@
         return window.location.origin + window.location.pathname;
     }
 
-    // 迁移旧的全局 autoEnter
     if (settings.autoEnter !== undefined) {
         const domain = getDomain();
         if (!autoEnterRules[domain]) {
@@ -66,7 +175,6 @@
         saveSettings();
     }
 
-    // ================== 手动退出标记处理 ==================
     const manualExitKey = 'reader_manual_exit_' + getPageKey();
     const exitFlag = GM_getValue(manualExitKey, 0);
     const now = Date.now();
@@ -74,7 +182,6 @@
     let skipAutoEnter = false;
     if (exitFlag && (now - exitFlag < 3000)) {
         skipAutoEnter = true;
-        console.log('[阅读模式] 检测到手动退出标记，本次跳过自动进入');
         setTimeout(() => {
             const currentFlag = GM_getValue(manualExitKey, 0);
             if (currentFlag === exitFlag) {
@@ -123,7 +230,6 @@
     `;
     GM_addStyle(cfgStyle);
 
-    // ================== 安全的 HTML 转义函数 ==================
     function escapeHtml(str) {
         if (!str) return '';
         const div = document.createElement('div');
@@ -131,7 +237,7 @@
         return div.innerHTML.replace(/"/g, '&quot;');
     }
 
-    // ================== 配置面板 ==================
+    // ==================== 配置面板 ====================
     function showViaConfig(targetDomain) {
         const domain = targetDomain || getDomain();
         
@@ -142,8 +248,8 @@
         
         const rule = customRules[domain] || { title: '', content: '', next: '', filter: '' };
         const autoEnterEnabled = !!autoEnterRules[domain];
+        const autoTranslateEnabled = !!autoTranslateRules[domain];
 
-        // 正文内容选择器的 placeholder 逻辑
         let contentPlaceholder = '';
         if (rule.content) {
             contentPlaceholder = '自定义';
@@ -173,7 +279,13 @@
                         <input type="checkbox" id="auto-enter-toggle" ${autoEnterEnabled ? 'checked' : ''}>
                         <span class="toggle-slider"></span>
                     </label>
-                    <div class="via-hint">自动阅读模式已匹配大部分规则，非正文误判请自定义正文选择器来规避</div>
+                </div>
+                <div class="toggle-switch">
+                    <span>自动翻译</span>
+                    <label class="toggle-label">
+                        <input type="checkbox" id="auto-translate-toggle" ${autoTranslateEnabled ? 'checked' : ''}>
+                        <span class="toggle-slider"></span>
+                    </label>
                 </div>
                 <span class="via-label">章节标题选择器</span>
                 <input type="text" id="via-t" class="via-input" placeholder="示例：.chapter-title" value="${escapeHtml(rule.title || '')}">
@@ -181,13 +293,14 @@
                 <input type="text" id="via-c" class="via-input" placeholder="${contentPlaceholder}" value="${escapeHtml(rule.content || '')}">
                 <span class="via-label">下一页选择器</span>
                 <input type="text" id="via-n" class="via-input" placeholder="示例：.next-page 或 regex:第\\s*[\\d一二三]+\\s*节" value="${escapeHtml(rule.next || '')}">
-                <span class="via-label">过滤选择器（与内置规则同时生效）</span>
+                <span class="via-label">过滤选择器</span>
                 <input type="text" id="via-f" class="via-input" placeholder="示例：.ad, .banner, .tips, .share" value="${escapeHtml(rule.filter || '')}">
             </div>`;
         document.body.appendChild(mask);
 
         const clickPageToggle = document.getElementById('click-page-toggle');
         const autoEnterToggle = document.getElementById('auto-enter-toggle');
+        const autoTranslateToggle = document.getElementById('auto-translate-toggle');
         const titleInput = document.getElementById('via-t');
         const contentInput = document.getElementById('via-c');
         const nextInput = document.getElementById('via-n');
@@ -216,6 +329,10 @@
             autoEnterRules[domain] = autoEnterToggle.checked;
             saveAutoEnter();
         };
+        autoTranslateToggle.onchange = () => {
+            autoTranslateRules[domain] = autoTranslateToggle.checked;
+            saveAutoTranslate();
+        };
 
         titleInput.addEventListener('blur', saveCurrentRules);
         contentInput.addEventListener('blur', saveCurrentRules);
@@ -242,6 +359,7 @@
         const allDomains = new Set();
         for (let d in customRules) allDomains.add(d);
         for (let d in autoEnterRules) allDomains.add(d);
+        for (let d in autoTranslateRules) allDomains.add(d);
 
         const mask = document.createElement('div');
         mask.id = 'via-site-manager';
@@ -255,6 +373,7 @@
             domains.forEach(domain => {
                 const rule = customRules[domain] || {};
                 const autoEnabled = !!autoEnterRules[domain];
+                const autoTransEnabled = !!autoTranslateRules[domain];
                 
                 let detailParts = [];
                 if (rule.title) detailParts.push('标题规则');
@@ -269,12 +388,21 @@
                             <div class="site-domain">${escapeHtml(domain)}</div>
                             ${detail ? `<div class="site-detail">${escapeHtml(detail)}</div>` : ''}
                         </div>
-                        <div class="site-auto-row">
-                            <span class="site-auto-label">自动阅读</span>
-                            <label class="toggle-label">
-                                <input type="checkbox" class="site-auto-toggle" data-domain="${escapeHtml(domain)}" ${autoEnabled ? 'checked' : ''}>
-                                <span class="toggle-slider"></span>
-                            </label>
+                        <div style="display:flex; flex-direction:column; gap:4px; flex-shrink:0; margin:0 12px;">
+                            <div class="site-auto-row">
+                                <span class="site-auto-label">阅读</span>
+                                <label class="toggle-label">
+                                    <input type="checkbox" class="site-auto-toggle" data-domain="${escapeHtml(domain)}" ${autoEnabled ? 'checked' : ''}>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="site-auto-row">
+                                <span class="site-auto-label">翻译</span>
+                                <label class="toggle-label">
+                                    <input type="checkbox" class="site-translate-toggle" data-domain="${escapeHtml(domain)}" ${autoTransEnabled ? 'checked' : ''}>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
                         </div>
                         <span class="site-delete-text" data-domain="${escapeHtml(domain)}">删除</span>
                     </div>`;
@@ -309,6 +437,14 @@
             };
         });
 
+        mask.querySelectorAll('.site-translate-toggle').forEach(toggle => {
+            toggle.onchange = () => {
+                const domain = toggle.getAttribute('data-domain');
+                autoTranslateRules[domain] = toggle.checked;
+                saveAutoTranslate();
+            };
+        });
+
         mask.querySelectorAll('.site-domain-clickable').forEach(el => {
             el.style.cursor = 'pointer';
             el.onclick = () => {
@@ -325,8 +461,10 @@
                 if (confirm(`确定要删除 ${domain} 的所有配置吗？`)) {
                     delete customRules[domain];
                     delete autoEnterRules[domain];
+                    delete autoTranslateRules[domain];
                     saveRules();
                     saveAutoEnter();
+                    saveAutoTranslate();
                     mask.remove();
                     showSiteManager();
                 }
@@ -337,8 +475,10 @@
             if (confirm('确定要清空所有网址的配置吗？此操作不可恢复！')) {
                 customRules = {};
                 autoEnterRules = {};
+                autoTranslateRules = {};
                 saveRules();
                 saveAutoEnter();
+                saveAutoTranslate();
                 mask.remove();
                 showSiteManager();
             }
@@ -347,7 +487,7 @@
 
     GM_registerMenuCommand("⚙️ 配置面板", () => showViaConfig());
 
-    // ================== 创建阅读按钮 ==================
+    // ==================== 创建阅读按钮 ====================
     function createReaderButton() {
         if (document.getElementById("txtyd")) return;
         
@@ -367,7 +507,7 @@
 
         const savedPos = GM_getValue("reader_btn_pos", null);
         let btnLeft = 0, btnTop = 0;
-        let isHidden =true;
+        let isHidden = true;
 
         function getHideDirection() {
             const rect = btn.getBoundingClientRect();
@@ -538,7 +678,7 @@
         });
     }
 
-    // ================== 自动进入阅读模式检测 ==================
+    // ==================== 自动进入阅读模式检测 ====================
     function tryAutoEnter() {
         if (!autoEnterRules[getDomain()] || skipAutoEnter) return;
         if (window._readingModeActive || document.getElementById("reader-toolbar")) return;
@@ -581,7 +721,7 @@
         }, 200);
     }
 
-    // ================== 阅读模式核心功能 ==================
+    // ==================== 阅读模式核心功能 ====================
     function enterReaderMode() {
         if (window._readingModeActive) return;
         window._readingModeActive = true;
@@ -837,6 +977,34 @@
 
         applySettings();
 
+        // ==================== 翻译缓存 ====================
+        const translatedCache = new Map();
+
+        // ==================== 自动翻译 ====================
+        async function autoTranslate(container) {
+            const domain = getDomain();
+            if (!autoTranslateRules[domain]) return;
+            
+            const html = container.innerHTML;
+            if (!html.trim()) return;
+            
+            // 检查缓存
+            if (translatedCache.has(html)) {
+                container.innerHTML = translatedCache.get(html);
+                return;
+            }
+            
+            const currentToken = await getToken();
+            if (!currentToken) return;
+            
+            const translatedHTML = await translateHTML(html);
+            if (translatedHTML) {
+                translatedCache.set(html, translatedHTML);
+                container.innerHTML = translatedHTML;
+            }
+        }
+
+        // ==================== 翻页逻辑（含预翻译）====================
         let nextUrl = initialUrl, isLoading = false;
         const displayedUrls = new Set();
         const MAX_CACHE_SIZE = 20;
@@ -890,7 +1058,6 @@
             const rule = getRuleForUrl(startUrl);
             let newNextUrl = "";
             
-            // 1. 自定义规则（最高优先级）
             if (rule.next) {
                 let nextSelector = rule.next;
                 let useRegex = false;
@@ -920,7 +1087,6 @@
                 }
             }
             
-            // 2. 内置文本正则匹配（第二优先级）
             if (!newNextUrl) {
                 const allLinks = doc.querySelectorAll("a");
                 const nextReg = /下一页|下页|下一章|下章|下一篇|后一页|后一章|next|下一頁|下頁|後一頁|後一章/i;
@@ -935,7 +1101,6 @@
                 }
             }
             
-            // 3. 属性选择器（第三优先级，作为兜底）
             if (!newNextUrl) {
                 const fallbackSelectors = [
                     'link[rel="next"]',
@@ -984,7 +1149,6 @@
             ];
 
             if (customContentSelector) {
-                // 自定义规则：合并所有匹配项，限制字数 >200
                 for (let s of contentSelectors) {
                     const nodes = doc.querySelectorAll(s);
                     for (const node of nodes) {
@@ -1006,7 +1170,6 @@
                     if (mainHTML) break;
                 }
             } else {
-                // 默认行为：只取第一个匹配的选择器，限制字数 >200
                 let foundNode = null;
                 for (let s of contentSelectors) {
                     foundNode = doc.querySelector(s);
@@ -1056,10 +1219,8 @@
                 const isCustomContent = !!rule.content;
                 const { title, mainHTML } = extractContentFromDoc(doc, rule, isCustomContent);
                 
-                // 先查找下一页链接（无论正文是否为空，都尝试翻页）
                 let newNextUrl = "";
                 
-                // 1. 自定义规则（最高优先级）
                 if (rule.next) {
                     let nextSelector = rule.next;
                     let useRegex = false;
@@ -1089,7 +1250,6 @@
                     }
                 }
                 
-                // 2. 内置文本正则匹配（第二优先级）
                 if (!newNextUrl) {
                     const allLinks = doc.querySelectorAll("a");
                     const nextReg = /下一页|下页|下一章|下章|下一篇|后一页|后一章|next|下一頁|下頁|後一頁|後一章/i;
@@ -1104,7 +1264,6 @@
                     }
                 }
                 
-                // 3. 属性选择器（第三优先级，作为兜底）
                 if (!newNextUrl) {
                     const fallbackSelectors = [
                         'link[rel="next"]',
@@ -1128,12 +1287,22 @@
                     }
                 }
                 
-                // 移除短内容检查（不再抛出异常，短内容正常显示）
-                // 只有正文非空时才显示标题和内容，避免空标题
                 if (mainHTML) {
+                    const chapterHTML = `<div class="chapter-title">${escapeHtml(title)}</div>${mainHTML}`;
                     const sec = document.createElement("div");
-                    sec.innerHTML = `<div class="chapter-title">${escapeHtml(title)}</div>${mainHTML}`;
-                    contentArea.appendChild(sec);
+                    
+                    const domain = getDomain();
+                    if (autoTranslateRules[domain]) {
+                        // 先显示原文
+                        sec.innerHTML = chapterHTML;
+                        contentArea.appendChild(sec);
+                        
+                        // 异步翻译
+                        autoTranslate(sec);
+                    } else {
+                        sec.innerHTML = chapterHTML;
+                        contentArea.appendChild(sec);
+                    }
                 }
                 if (url !== initialUrl) history.pushState(null, originalTitle, url);
                 applySettings();
@@ -1170,10 +1339,12 @@
             const vh = window.innerHeight;
             e.clientY < vh * 0.4 ? window.scrollBy(0, -vh * 0.85) : window.scrollBy(0, vh * 0.85);
         });
-        fetchContent(initialUrl);
+        fetchContent(initialUrl).then(() => {
+            autoTranslate(contentArea);
+        });
     }
 
-    // ================== 初始化 ==================
+    // ==================== 初始化 ====================
     createReaderButton();
     tryAutoEnter();
 })();
