@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         阅读模式增强插件 (含翻译)
 // @namespace    https://viayoo.com/
-// @version      12.28.4
+// @version      12.28.6
 // @match        *://*/*
 // @run-at       document-end
 // @grant        GM_setValue
@@ -23,7 +23,6 @@
     let tokenPromise = null;
     let tokenExpireTime = 0;
 
-    // 启动时立即获取 Token
     getToken();
 
     function getToken() {
@@ -803,6 +802,7 @@
                         background: #4CAF50;
                     }
                     #exit-btn { color: red !important; }
+                    #fullscreen-btn { font-size: 18px; }
                     .font-control {
                         display: flex;
                         background: rgba(0,0,0,0.5);
@@ -859,6 +859,7 @@
                         <div class="font-control-item" id="font-incr">A+</div>
                     </div>
                     <div class="toolbar-btn" id="theme-btn">🎨</div>
+                    <div class="toolbar-btn" id="fullscreen-btn" title="全屏">⛶</div>
                     <div class="toolbar-btn" id="config-btn">⚙️</div>
                     <div class="toolbar-btn" id="exit-btn">🚫</div>
                 </div>
@@ -882,11 +883,21 @@
         const fontIncr = document.getElementById("font-incr");
         const fontSizeDisplay = document.getElementById("font-size-display");
         const themeBtn = document.getElementById("theme-btn");
+        const fullscreenBtn = document.getElementById("fullscreen-btn");
         const configBtn = document.getElementById("config-btn");
         const exitBtn = document.getElementById("exit-btn");
         const themePanel = document.getElementById("theme-panel");
 
         themePanel.classList.remove("show");
+
+        // ==================== 全屏按钮 ====================
+        fullscreenBtn.onclick = () => {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(() => {});
+            } else {
+                document.exitFullscreen();
+            }
+        };
 
         let toolbarVisible = true;
         let startToolbarY = 0;
@@ -980,7 +991,6 @@
         // ==================== 翻译缓存 ====================
         const translatedCache = new Map();
 
-        // ==================== 自动翻译 ====================
         async function autoTranslate(container) {
             const domain = getDomain();
             if (!autoTranslateRules[domain]) return;
@@ -988,7 +998,6 @@
             const html = container.innerHTML;
             if (!html.trim()) return;
             
-            // 检查缓存
             if (translatedCache.has(html)) {
                 container.innerHTML = translatedCache.get(html);
                 return;
@@ -1004,7 +1013,7 @@
             }
         }
 
-        // ==================== 翻页逻辑（含预翻译）====================
+        // ==================== 翻页逻辑 ====================
         let nextUrl = initialUrl, isLoading = false;
         const displayedUrls = new Set();
         const MAX_CACHE_SIZE = 20;
@@ -1290,18 +1299,12 @@
                 if (mainHTML) {
                     const chapterHTML = `<div class="chapter-title">${escapeHtml(title)}</div>${mainHTML}`;
                     const sec = document.createElement("div");
+                    sec.innerHTML = chapterHTML;
+                    contentArea.appendChild(sec);
                     
                     const domain = getDomain();
                     if (autoTranslateRules[domain]) {
-                        // 先显示原文
-                        sec.innerHTML = chapterHTML;
-                        contentArea.appendChild(sec);
-                        
-                        // 异步翻译
                         autoTranslate(sec);
-                    } else {
-                        sec.innerHTML = chapterHTML;
-                        contentArea.appendChild(sec);
                     }
                 }
                 if (url !== initialUrl) history.pushState(null, originalTitle, url);
