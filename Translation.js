@@ -1,11 +1,14 @@
 // ==UserScript==
 // @name         全页翻译 (Via Edge 引擎)
 // @namespace    https://via.browser/
-// @version      11.24
+// @version      12.4
 // @author       You
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_addStyle
+// @grant        GM_registerMenuCommand
+// @grant        GM_getValue
+// @grant        GM_setValue
 // @connect      edge.microsoft.com
 // @connect      api.cognitive.microsofttranslator.com
 // ==/UserScript==
@@ -15,13 +18,17 @@
     if (window.__t) return;
     window.__t = true;
 
-    GM_addStyle('#via-trans-btn{position:fixed;bottom:80px;right:20px;z-index:2147483647;width:48px;height:48px;border-radius:50%;background:#999;color:#fff;font-size:14px;font-weight:bold;border:none;box-shadow:0 4px 12px rgba(0,0,0,.4);cursor:pointer;display:flex;align-items:center;justify-content:center;user-select:none;-webkit-user-select:none}');
+    GM_addStyle('#via-trans-btn{position:fixed;bottom:80px;right:20px;z-index:2147483647;width:48px;height:48px;border-radius:50%;background:#999;color:#fff;font-size:14px;font-weight:bold;border:none;box-shadow:0 4px 12px rgba(0,0,0,.4);cursor:pointer;display:flex;align-items:center;justify-content:center;user-select:none;-webkit-user-select:none}#via-trans-btn.hidden{display:none}');
 
     const btn = Object.assign(document.createElement('button'), {
         id: 'via-trans-btn',
         textContent: '译'
     });
     document.body.appendChild(btn);
+
+    if (GM_getValue('btnHidden', false)) {
+        btn.classList.add('hidden');
+    }
 
     const BATCH_SIZE = 25;
     const CONCURRENT = 4;
@@ -38,6 +45,7 @@
     const historySet = new WeakSet();
 
     let token = null, tokenPromise = null;
+    let gestureEnabled = GM_getValue('gestureEnabled', true);
 
     function getToken() {
         if (token) return Promise.resolve(token);
@@ -221,43 +229,6 @@
         observer.observe(document.body, { childList: true, subtree: true });
     }
 
-    // 三指快速点击
-    let gestureStartTime = 0;
-    let gestureMoved = false;
-
-    document.addEventListener('touchstart', (e) => {
-        if (e.touches.length === 3) {
-            gestureStartTime = Date.now();
-            gestureMoved = false;
-        }
-    }, { passive: true });
-
-    document.addEventListener('touchmove', (e) => {
-        if (e.touches.length >= 3) gestureMoved = true;
-    }, { passive: true });
-
-    document.addEventListener('touchend', async (e) => {
-        if (e.touches.length === 0 && !gestureMoved && Date.now() - gestureStartTime < 500) {
-            if (btn.disabled) return;
-
-            // 已有译文 → 切换原文/译文
-            if (history.length) {
-                if (isOriginal) {
-                    switchToTranslated();
-                    isOriginal = false;
-                    startObserver();
-                } else {
-                    switchToOriginal();
-                    isOriginal = true;
-                }
-                return;
-            }
-
-            // 无译文 → 翻译
-            doTranslate();
-        }
-    });
-
     async function doTranslate() {
         btn.disabled = true;
         btn.style.background = '#f39c12';
@@ -287,6 +258,42 @@
         isOriginal = false;
         startObserver();
     }
+
+    // 三指快速点击
+    let gestureStartTime = 0;
+    let gestureMoved = false;
+
+    document.addEventListener('touchstart', (e) => {
+        if (!gestureEnabled) return;
+        if (e.touches.length === 3) {
+            gestureStartTime = Date.now();
+            gestureMoved = false;
+        }
+    }, { passive: true });
+
+    document.addEventListener('touchmove', (e) => {
+        if (!gestureEnabled) return;
+        if (e.touches.length >= 3) gestureMoved = true;
+    }, { passive: true });
+
+    document.addEventListener('touchend', async (e) => {
+        if (!gestureEnabled) return;
+        if (e.touches.length === 0 && !gestureMoved && Date.now() - gestureStartTime < 500) {
+            if (btn.disabled) return;
+            if (history.length) {
+                if (isOriginal) {
+                    switchToTranslated();
+                    isOriginal = false;
+                    startObserver();
+                } else {
+                    switchToOriginal();
+                    isOriginal = true;
+                }
+                return;
+            }
+            doTranslate();
+        }
+    });
 
     // 长按按钮切换
     let longPressTimer = null, isLongPress = false;
@@ -321,4 +328,34 @@
         }
         doTranslate();
     });
+
+    // 动态菜单
+    function updateMenu() {
+        const hidden = btn.classList.contains('hidden');
+        GM_registerMenuCommand(hidden ? '显示按钮' : '隐藏按钮', () => {
+            btn.classList.toggle('hidden');
+            const nowHidden = btn.classList.contains('hidden');
+            GM_setValue('btnHidden', nowHidden);
+            updateMenu();
+        });
+
+        GM_registerMenuCommand(gestureEnabled ? '关闭三指手势' : '开启三指手势', () => {
+            gestureEnabled = !gestureEnabled;
+            GM_setValue('gestureEnabled', gestureEnabled);
+            updateMenu();
+        });
+
+        GM_registerMenuCommand('翻译网页', () => {
+            if (btn.disabled) return;
+            if (isOriginal && history.length) {
+                switchToTranslated();
+                isOriginal = false;
+                startObserver();
+                return;
+            }
+            doTranslate();
+        });
+    }
+
+    updateMenu();
 })();
