@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         全页翻译 (Via Edge 引擎)
 // @namespace    https://via.browser/
-// @version      12.4
+// @version      19.4
 // @author       You
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_addStyle
 // @grant        GM_registerMenuCommand
+// @grant        GM_unregisterMenuCommand
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @connect      edge.microsoft.com
@@ -18,7 +19,12 @@
     if (window.__t) return;
     window.__t = true;
 
-    GM_addStyle('#via-trans-btn{position:fixed;bottom:80px;right:20px;z-index:2147483647;width:48px;height:48px;border-radius:50%;background:#999;color:#fff;font-size:14px;font-weight:bold;border:none;box-shadow:0 4px 12px rgba(0,0,0,.4);cursor:pointer;display:flex;align-items:center;justify-content:center;user-select:none;-webkit-user-select:none}#via-trans-btn.hidden{display:none}');
+    GM_addStyle(`
+#via-trans-btn{position:fixed;bottom:80px;right:20px;z-index:2147483647;width:48px;height:48px;border-radius:50%;background:#999;color:#fff;font-size:14px;font-weight:bold;border:none;box-shadow:0 4px 12px rgba(0,0,0,.4);cursor:pointer;display:flex;align-items:center;justify-content:center;user-select:none;-webkit-user-select:none}
+#via-trans-btn.hidden{display:none}
+.via-bi{display:block;margin-top:6px;color:#5a8fb4;font-size:.92em;line-height:1.6;padding-left:8px;border-left:2px solid rgba(74,158,255,0.3)}
+@media(prefers-color-scheme:dark){.via-bi{color:#7babc8;border-left-color:rgba(100,160,220,0.25)}}
+`);
 
     const btn = Object.assign(document.createElement('button'), {
         id: 'via-trans-btn',
@@ -26,19 +32,18 @@
     });
     document.body.appendChild(btn);
 
-    if (GM_getValue('btnHidden', false)) {
-        btn.classList.add('hidden');
-    }
+    if (GM_getValue('btnHidden', false)) btn.classList.add('hidden');
 
-    const BATCH_SIZE = 25;
-    const CONCURRENT = 4;
+    const CONCURRENT = 8;
     const TRANSLATED_ATTR = 'data-via-t';
+    const host = location.host;
 
     const SKIP_TAGS = new Set([
-        'SCRIPT', 'STYLE', 'NOSCRIPT', 'TEXTAREA',
+        'SCRIPT', 'STYLE', 'NOSCRIPT',
         'CODE', 'PRE', 'KBD', 'VAR', 'SAMP',
         'IFRAME', 'OBJECT', 'EMBED', 'CANVAS',
-        'SVG', 'MATH', 'VIDEO', 'AUDIO'
+        'SVG', 'MATH', 'VIDEO', 'AUDIO',
+        'TITLE'
     ]);
 
     const history = [];
@@ -46,6 +51,29 @@
 
     let token = null, tokenPromise = null;
     let gestureEnabled = GM_getValue('gestureEnabled', true);
+    let btnHidden = GM_getValue('btnHidden', false);
+
+    // 网站绑定设置
+    const siteSettings = JSON.parse(GM_getValue('siteSettings3', '{}'));
+    if (!siteSettings[host]) siteSettings[host] = {};
+    const s = siteSettings[host];
+    if (s.strictMode === undefined) s.strictMode = false;
+    if (s.autoMode === undefined) s.autoMode = false;
+    if (s.bilingualMode === undefined) s.bilingualMode = false;
+    if (s.selector === undefined) s.selector = 'p';
+    let strictMode = s.strictMode;
+    let autoMode = s.autoMode;
+    let bilingualMode = s.bilingualMode;
+    let bilingualSelector = s.selector;
+
+    function saveSite() {
+        s.strictMode = strictMode;
+        s.autoMode = autoMode;
+        s.bilingualMode = bilingualMode;
+        s.selector = bilingualSelector;
+        siteSettings[host] = s;
+        GM_setValue('siteSettings3', JSON.stringify(siteSettings));
+    }
 
     function getToken() {
         if (token) return Promise.resolve(token);
@@ -65,26 +93,19 @@
 
     getToken();
 
-    function translateBatch(batch) {
+    function translateBatch(body) {
         return new Promise(resolve => {
             GM_xmlhttpRequest({
                 method: 'POST',
                 url: 'https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&to=zh-Hans&textType=html',
                 headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-                data: JSON.stringify(batch),
+                data: JSON.stringify(body),
                 timeout: 15000,
                 onload(r) {
                     if (r.status === 200) {
-                        try {
-                            resolve(JSON.parse(r.responseText).map(item => item.translations[0].text));
-                        } catch(e) {
-                            resolve(null);
-                        }
-                    } else {
-                        token = null;
-                        tokenPromise = null;
-                        resolve(null);
-                    }
+                        try { resolve(JSON.parse(r.responseText).map(item => item.translations[0].text)); }
+                        catch(e) { resolve(null); }
+                    } else { token = null; tokenPromise = null; resolve(null); }
                 },
                 onerror() { resolve(null); },
                 ontimeout() { resolve(null); }
@@ -97,6 +118,7 @@
     }
 
     function isSafeNode(node) {
+        if (strictMode) return true;
         let el = node.parentElement;
         while (el) {
             if (SKIP_TAGS.has(el.nodeName)) return false;
@@ -105,11 +127,87 @@
         return true;
     }
 
-    function addToHistory(node, translated) {
-        history.push({ node: node, original: node.nodeValue, translated: translated });
+    function isVisible(node) {
+        if (strictMode) return true;
+        const el = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+        if (!el) return true;
+        try {
+            const style = window.getComputedStyle(el);
+            if (style.display === 'none' || style.visibility === 'hidden') return false;
+            if (style.opacity === '0') return false;
+        } catch(e) {}
+        return true;
+    }
+
+    function addToHistory(node, original, translated) {
+        history.push({ node: node, original: original, translated: translated });
         historySet.add(node);
-        const el = node.parentElement;
+    }
+
+    function markTranslated(node) {
+        const el = node._textarea ? node.el : node._input ? node.el : node._ph ? node.el : node._img ? node.el : node._svg ? node.el : node.parentElement;
         if (el && el.setAttribute) el.setAttribute(TRANSLATED_ATTR, '1');
+    }
+
+    function getNodeText(node) {
+        if (node._textarea) return node.el.value;
+        if (node._input) return node.el.value;
+        if (node._ph) return node.el.placeholder;
+        if (node._img) return node.el.alt;
+        if (node._svg) return node.el.textContent;
+        return node.nodeValue;
+    }
+
+    function setNodeText(node, text) {
+        if (node._textarea) node.el.value = text;
+        else if (node._input) node.el.value = text;
+        else if (node._ph) node.el.placeholder = text;
+        else if (node._img) node.el.alt = text;
+        else if (node._svg) node.el.textContent = text;
+        else node.nodeValue = text;
+    }
+
+    function removeBilingual() {
+        document.querySelectorAll('.via-bi').forEach(el => el.remove());
+    }
+
+    function rebuildBilingual() {
+        removeBilingual();
+        if (!bilingualSelector) return;
+        const groups = new Map();
+        for (const item of history) {
+            if (item.node._textarea || item.node._input || item.node._ph || item.node._img || item.node._svg) continue;
+            let el = item.node.parentElement;
+            while (el && el !== document.body) {
+                try {
+                    if (el.matches && el.matches(bilingualSelector)) {
+                        if (!groups.has(el)) groups.set(el, []);
+                        groups.get(el).push(item);
+                        break;
+                    }
+                } catch(e) {}
+                el = el.parentElement;
+            }
+        }
+        const bilingualNodes = new Set();
+        for (const [el, items] of groups) {
+            let combinedTranslated = '';
+            for (const item of items) {
+                setNodeText(item.node, item.original);
+                combinedTranslated += (combinedTranslated ? ' ' : '') + item.translated;
+                bilingualNodes.add(item.node);
+            }
+            const div = document.createElement('div');
+            div.className = 'via-bi';
+            div.setAttribute('data-via-bi', '1');
+            div.textContent = combinedTranslated;
+            el.appendChild(div);
+        }
+        for (const item of history) {
+            if (!bilingualNodes.has(item.node)) {
+                setNodeText(item.node, item.translated);
+            }
+        }
     }
 
     function collectAllTextNodes(root) {
@@ -117,12 +215,29 @@
         const stack = [root];
         while (stack.length) {
             const el = stack.pop();
+            if (el.hasAttribute && el.hasAttribute('data-via-bi')) continue;
             if (el.shadowRoot) stack.push(el.shadowRoot);
             for (let child = el.firstChild; child; child = child.nextSibling) {
                 if (child.nodeType === Node.TEXT_NODE) {
-                    if (child.nodeValue.trim() && isUntranslated(child) && isSafeNode(child)) nodes.push(child);
+                    if (child.nodeValue.trim() && isUntranslated(child) && isSafeNode(child) && isVisible(child)) {
+                        nodes.push(child);
+                    }
                 } else if (child.nodeType === Node.ELEMENT_NODE) {
-                    stack.push(child);
+                    if (child.hasAttribute && child.hasAttribute('data-via-bi')) continue;
+                    const tag = child.nodeName;
+                    if (tag === 'TEXTAREA' && isUntranslated(child) && child.value.trim() && isVisible(child)) {
+                        nodes.push({ _textarea: true, el: child });
+                    } else if (tag === 'INPUT' && isUntranslated(child) && child.value.trim() && isVisible(child)) {
+                        nodes.push({ _input: true, el: child });
+                    } else if ((tag === 'INPUT' || tag === 'TEXTAREA') && isUntranslated(child) && child.placeholder && child.placeholder.trim() && isVisible(child)) {
+                        nodes.push({ _ph: true, el: child });
+                    } else if (tag === 'IMG' && isUntranslated(child) && child.alt && child.alt.trim() && isVisible(child)) {
+                        nodes.push({ _img: true, el: child });
+                    } else if (tag === 'text' && isUntranslated(child) && child.textContent && child.textContent.trim() && isVisible(child)) {
+                        nodes.push({ _svg: true, el: child });
+                    } else {
+                        stack.push(child);
+                    }
                 }
             }
         }
@@ -141,96 +256,126 @@
         return nodes;
     }
 
+    function makeBatches(nodes, batchSize) {
+        const batches = [];
+        for (let i = 0; i < nodes.length; i += batchSize) {
+            batches.push(nodes.slice(i, i + batchSize));
+        }
+        return batches;
+    }
+
     async function translateNodes(nodes, showProgress) {
         if (!nodes.length) return true;
 
-        const batches = [];
-        for (let i = 0; i < nodes.length; i += BATCH_SIZE) {
-            batches.push({
-                index: i,
-                nodes: nodes.slice(i, i + BATCH_SIZE),
-                body: nodes.slice(i, i + BATCH_SIZE).map(n => ({ Text: n.nodeValue }))
-            });
+        let batchSize = 50;
+        let translatedCount = 0;
+
+        if (showProgress) {
+            btn.style.background = '#f39c12';
         }
 
-        let translatedCount = 0;
-        let allSuccess = true;
+        while (true) {
+            const batches = makeBatches(nodes.slice(translatedCount), batchSize);
+            if (!batches.length) break;
 
-        for (let i = 0; i < batches.length; i += CONCURRENT) {
-            const chunk = batches.slice(i, i + CONCURRENT);
-            const results = await Promise.all(chunk.map(b => translateBatch(b.body)));
+            let roundOK = true;
 
-            for (let k = 0; k < chunk.length; k++) {
-                const result = results[k];
-                if (!result) {
-                    allSuccess = false;
-                    break;
+            for (let i = 0; i < batches.length; i += CONCURRENT) {
+                const chunk = batches.slice(i, i + CONCURRENT);
+                const results = await Promise.all(
+                    chunk.map(b => translateBatch(
+                        b.map(n => ({ Text: getNodeText(n) }))
+                    ))
+                );
+
+                for (let k = 0; k < chunk.length; k++) {
+                    if (!results[k]) { roundOK = false; break; }
+                    for (let j = 0; j < results[k].length; j++) {
+                        const node = chunk[k][j];
+                        const original = getNodeText(node);
+                        addToHistory(node, original, results[k][j]);
+                        setNodeText(node, results[k][j]);
+                        markTranslated(node);
+                    }
+                    translatedCount += results[k].length;
                 }
-                for (let j = 0; j < result.length; j++) {
-                    const node = chunk[k].nodes[j];
-                    addToHistory(node, result[j]);
-                    node.nodeValue = result[j];
+
+                if (!roundOK) break;
+
+                if (showProgress) {
+                    btn.textContent = Math.round((translatedCount / nodes.length) * 100) + '%';
                 }
-                translatedCount += result.length;
             }
 
-            if (!allSuccess) break;
+            if (roundOK) break;
+
+            if (batchSize > 1) {
+                batchSize = Math.floor(batchSize / 2);
+                continue;
+            }
 
             if (showProgress) {
-                btn.textContent = Math.round((translatedCount / nodes.length) * 100) + '%';
+                btn.textContent = '译';
+                btn.style.background = '#e74c3c';
             }
+            return false;
         }
 
-        if (showProgress) btn.textContent = '译';
-        return allSuccess;
+        if (showProgress) {
+            btn.textContent = '译';
+            btn.style.background = '#0078d4';
+        }
+        return true;
     }
 
     function switchToOriginal() {
         if (!history.length) return;
-        for (const item of history) item.node.nodeValue = item.original;
+        removeBilingual();
+        for (const item of history) setNodeText(item.node, item.original);
         document.querySelectorAll('[' + TRANSLATED_ATTR + ']').forEach(el => el.removeAttribute(TRANSLATED_ATTR));
         btn.style.background = '#999';
     }
 
     function switchToTranslated() {
         if (!history.length) return;
+        removeBilingual();
         for (const item of history) {
-            item.node.nodeValue = item.translated;
-            const el = item.node.parentElement;
-            if (el && el.setAttribute) el.setAttribute(TRANSLATED_ATTR, '1');
+            setNodeText(item.node, item.translated);
+            markTranslated(item.node);
         }
         btn.style.background = '#0078d4';
     }
 
-    let observer = null, pendingNodes = [], debounceTimer = null, isOriginal = false;
+    function switchToBilingual() {
+        if (!history.length) return;
+        rebuildBilingual();
+        btn.style.background = '#0078d4';
+    }
+
+    let observer = null, debounceTimer = null, isOriginal = false, isTranslating = false;
 
     function startObserver() {
         if (observer) return;
-        observer = new MutationObserver(mutations => {
-            for (const m of mutations) {
-                for (const node of m.addedNodes) {
-                    if (node.nodeType === Node.TEXT_NODE && node.nodeValue.trim() && isUntranslated(node) && isSafeNode(node)) {
-                        pendingNodes.push(node);
-                    } else if (node.nodeType === Node.ELEMENT_NODE) {
-                        pendingNodes.push(...collectAllTextNodes(node));
-                    }
+        observer = new MutationObserver(() => {
+            if (isOriginal || isTranslating) return;
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(async () => {
+                if (isOriginal || isTranslating) return;
+                const nodes = collectAllTextNodes(document.body);
+                if (nodes.length > 0) {
+                    isTranslating = true;
+                    const success = await translateNodes(nodes, false);
+                    if (bilingualMode && success) rebuildBilingual();
+                    isTranslating = false;
                 }
-            }
-            if (pendingNodes.length > 0) {
-                clearTimeout(debounceTimer);
-                debounceTimer = setTimeout(async () => {
-                    const nodes = [...pendingNodes];
-                    pendingNodes = [];
-                    if (isOriginal) return;
-                    await translateNodes(nodes, false);
-                }, 500);
-            }
+            }, 800);
         });
         observer.observe(document.body, { childList: true, subtree: true });
     }
 
     async function doTranslate() {
         btn.disabled = true;
+        isTranslating = true;
         btn.style.background = '#f39c12';
         btn.textContent = '...';
 
@@ -238,6 +383,7 @@
             btn.style.background = '#e74c3c';
             btn.textContent = '译';
             btn.disabled = false;
+            isTranslating = false;
             return;
         }
 
@@ -248,27 +394,25 @@
             btn.style.background = '#0078d4';
             btn.textContent = '译';
             btn.disabled = false;
+            isTranslating = false;
             startObserver();
             return;
         }
 
         const success = await translateNodes(nodes, true);
+        if (bilingualMode && success) rebuildBilingual();
         btn.style.background = success ? '#0078d4' : '#e74c3c';
         btn.disabled = false;
         isOriginal = false;
+        isTranslating = false;
         startObserver();
     }
 
-    // 三指快速点击
-    let gestureStartTime = 0;
-    let gestureMoved = false;
+    let gestureStartTime = 0, gestureMoved = false;
 
     document.addEventListener('touchstart', (e) => {
         if (!gestureEnabled) return;
-        if (e.touches.length === 3) {
-            gestureStartTime = Date.now();
-            gestureMoved = false;
-        }
+        if (e.touches.length === 3) { gestureStartTime = Date.now(); gestureMoved = false; }
     }, { passive: true });
 
     document.addEventListener('touchmove', (e) => {
@@ -282,12 +426,10 @@
             if (btn.disabled) return;
             if (history.length) {
                 if (isOriginal) {
-                    switchToTranslated();
-                    isOriginal = false;
-                    startObserver();
+                    bilingualMode ? switchToBilingual() : switchToTranslated();
+                    isOriginal = false; startObserver();
                 } else {
-                    switchToOriginal();
-                    isOriginal = true;
+                    switchToOriginal(); isOriginal = true;
                 }
                 return;
             }
@@ -295,67 +437,87 @@
         }
     });
 
-    // 长按按钮切换
-    let longPressTimer = null, isLongPress = false;
-
-    btn.addEventListener('pointerdown', () => {
-        isLongPress = false;
-        longPressTimer = setTimeout(() => {
-            isLongPress = true;
-            if (history.length) {
-                if (isOriginal) {
-                    switchToTranslated();
-                    isOriginal = false;
-                } else {
-                    switchToOriginal();
-                    isOriginal = true;
-                }
-            }
-        }, 600);
-    });
-
-    btn.addEventListener('pointerup', () => clearTimeout(longPressTimer));
-    btn.addEventListener('pointerleave', () => clearTimeout(longPressTimer));
-
     btn.addEventListener('click', async () => {
-        if (isLongPress) return;
         if (btn.disabled) return;
         if (isOriginal && history.length) {
-            switchToTranslated();
-            isOriginal = false;
-            startObserver();
-            return;
+            bilingualMode ? switchToBilingual() : switchToTranslated();
+            isOriginal = false; startObserver(); return;
         }
         doTranslate();
     });
 
-    // 动态菜单
-    function updateMenu() {
-        const hidden = btn.classList.contains('hidden');
-        GM_registerMenuCommand(hidden ? '显示按钮' : '隐藏按钮', () => {
-            btn.classList.toggle('hidden');
-            const nowHidden = btn.classList.contains('hidden');
-            GM_setValue('btnHidden', nowHidden);
-            updateMenu();
-        });
+    let menuIds = {};
 
-        GM_registerMenuCommand(gestureEnabled ? '关闭三指手势' : '开启三指手势', () => {
-            gestureEnabled = !gestureEnabled;
-            GM_setValue('gestureEnabled', gestureEnabled);
-            updateMenu();
-        });
+    function registerMenus() {
+        Object.values(menuIds).forEach(id => { try { GM_unregisterMenuCommand(id); } catch(e) {} });
+        menuIds = {};
 
-        GM_registerMenuCommand('翻译网页', () => {
+        menuIds.translate = GM_registerMenuCommand('1. 翻译网页', () => {
             if (btn.disabled) return;
             if (isOriginal && history.length) {
-                switchToTranslated();
-                isOriginal = false;
-                startObserver();
-                return;
+                bilingualMode ? switchToBilingual() : switchToTranslated();
+                isOriginal = false; startObserver(); return;
             }
             doTranslate();
         });
+
+        menuIds.original = GM_registerMenuCommand('2. 原文/译文', () => {
+            if (!history.length) return;
+            if (isOriginal) {
+                bilingualMode ? switchToBilingual() : switchToTranslated();
+                isOriginal = false; startObserver();
+            } else {
+                switchToOriginal(); isOriginal = true;
+            }
+        });
+
+        menuIds.strict = GM_registerMenuCommand(strictMode ? '3. 严格翻译模式' : '3. 标准翻译模式', () => {
+            strictMode = !strictMode;
+            saveSite();
+            registerMenus();
+        });
+
+        menuIds.auto = GM_registerMenuCommand(autoMode ? '4. 自动翻译开启' : '4. 自动翻译关闭', () => {
+            autoMode = !autoMode;
+            saveSite();
+            registerMenus();
+        });
+
+        menuIds.bilingual = GM_registerMenuCommand(bilingualMode ? '5. 双语对照开启' : '5. 双语对照关闭', () => {
+            bilingualMode = !bilingualMode;
+            saveSite();
+            registerMenus();
+        });
+
+        menuIds.selector = GM_registerMenuCommand('6. 设置双语选择器', () => {
+            const newSel = prompt('输入CSS选择器（如 .comment, article）：\n网站：' + host, bilingualSelector);
+            if (newSel !== null) {
+                bilingualSelector = newSel.trim();
+                saveSite();
+                if (bilingualMode && history.length) rebuildBilingual();
+            }
+        });
+
+        menuIds.gesture = GM_registerMenuCommand(gestureEnabled ? '7. 三指手势开启' : '7. 三指手势关闭', () => {
+            gestureEnabled = !gestureEnabled;
+            GM_setValue('gestureEnabled', gestureEnabled);
+            registerMenus();
+        });
+
+        menuIds.btn = GM_registerMenuCommand(btn.classList.contains('hidden') ? '8. 显示按钮' : '8. 隐藏按钮', () => {
+            btn.classList.toggle('hidden');
+            GM_setValue('btnHidden', btn.classList.contains('hidden'));
+            registerMenus();
+        });
     }
 
-    updateMenu();
+    registerMenus();
+
+    if (autoMode) {
+        if (document.readyState === 'complete') {
+            doTranslate();
+        } else {
+            window.addEventListener('load', () => doTranslate());
+        }
+    }
 })();
