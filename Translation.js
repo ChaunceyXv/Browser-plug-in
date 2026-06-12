@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         全页翻译 (Via Edge 引擎)
 // @namespace    https://via.browser/
-// @version      19.4
+// @version      18.3
 // @author       You
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
@@ -36,7 +36,6 @@
 
     const CONCURRENT = 8;
     const TRANSLATED_ATTR = 'data-via-t';
-    const host = location.host;
 
     const SKIP_TAGS = new Set([
         'SCRIPT', 'STYLE', 'NOSCRIPT',
@@ -51,29 +50,29 @@
 
     let token = null, tokenPromise = null;
     let gestureEnabled = GM_getValue('gestureEnabled', true);
-    let btnHidden = GM_getValue('btnHidden', false);
-
-    // 网站绑定设置
-    const siteSettings = JSON.parse(GM_getValue('siteSettings3', '{}'));
-    if (!siteSettings[host]) siteSettings[host] = {};
-    const s = siteSettings[host];
-    if (s.strictMode === undefined) s.strictMode = false;
-    if (s.autoMode === undefined) s.autoMode = false;
-    if (s.bilingualMode === undefined) s.bilingualMode = false;
-    if (s.selector === undefined) s.selector = 'p';
-    let strictMode = s.strictMode;
-    let autoMode = s.autoMode;
-    let bilingualMode = s.bilingualMode;
-    let bilingualSelector = s.selector;
-
-    function saveSite() {
-        s.strictMode = strictMode;
-        s.autoMode = autoMode;
-        s.bilingualMode = bilingualMode;
-        s.selector = bilingualSelector;
-        siteSettings[host] = s;
-        GM_setValue('siteSettings3', JSON.stringify(siteSettings));
+    
+    // 按网站存储的辅助函数
+    function getSiteKey() {
+        return window.location.hostname;
     }
+    
+    function getSitePref(key, defaultValue) {
+        const siteKey = getSiteKey();
+        const all = GM_getValue(key + '_sites', {});
+        return all[siteKey] !== undefined ? all[siteKey] : defaultValue;
+    }
+    
+    function setSitePref(key, value) {
+        const siteKey = getSiteKey();
+        const all = GM_getValue(key + '_sites', {});
+        all[siteKey] = value;
+        GM_setValue(key + '_sites', all);
+    }
+    
+    let strictMode = getSitePref('strictMode', false);
+    let autoMode = getSitePref('autoMode', false);
+    let bilingualMode = getSitePref('bilingualMode', false);
+    let bilingualSelector = getSitePref('bilingualSelector', 'P');
 
     function getToken() {
         if (token) return Promise.resolve(token);
@@ -473,28 +472,40 @@
 
         menuIds.strict = GM_registerMenuCommand(strictMode ? '3. 严格翻译模式' : '3. 标准翻译模式', () => {
             strictMode = !strictMode;
-            saveSite();
+            setSitePref('strictMode', strictMode);
             registerMenus();
         });
 
         menuIds.auto = GM_registerMenuCommand(autoMode ? '4. 自动翻译开启' : '4. 自动翻译关闭', () => {
             autoMode = !autoMode;
-            saveSite();
+            setSitePref('autoMode', autoMode);
             registerMenus();
         });
 
         menuIds.bilingual = GM_registerMenuCommand(bilingualMode ? '5. 双语对照开启' : '5. 双语对照关闭', () => {
             bilingualMode = !bilingualMode;
-            saveSite();
+            setSitePref('bilingualMode', bilingualMode);
+            if (history.length) {
+                if (isOriginal) {
+                    // do nothing
+                } else {
+                    if (bilingualMode) {
+                        switchToBilingual();
+                    } else {
+                        switchToTranslated();
+                    }
+                }
+            }
             registerMenus();
         });
 
         menuIds.selector = GM_registerMenuCommand('6. 设置双语选择器', () => {
-            const newSel = prompt('输入CSS选择器（如 .comment, article）：\n网站：' + host, bilingualSelector);
+            const newSel = prompt('输入CSS选择器（如 .comment, article）：', bilingualSelector);
             if (newSel !== null) {
                 bilingualSelector = newSel.trim();
-                saveSite();
-                if (bilingualMode && history.length) rebuildBilingual();
+                setSitePref('bilingualSelector', bilingualSelector);
+                if (bilingualMode && history.length && !isOriginal) rebuildBilingual();
+                registerMenus();
             }
         });
 
