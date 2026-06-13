@@ -1,65 +1,65 @@
-==用户脚本==
+// ==UserScript==
 // @name         主页
-@namespace http://tampermonkey.net/
-@version 1.11
+// @namespace    http://tampermonkey.net/
+// @version      1.11
 // @description  自定义百度首页
-@match https://www.baidu.com/
-@run-at document-start
-@grant GM_setValue
-@grant GM_getValue
-==/用户脚本==
+// @match        https://www.baidu.com/
+// @run-at       document-start
+// @grant        GM_setValue
+// @grant        GM_getValue
+// ==/UserScript==
 
-(功能() {
-    “用严格的”;
+(function() {
+    'use strict';
 
     // ==================== 工具函数 ====================
     
-    功能 getRandomColor() {
-        VAR h = 数学.地板(数学.随机() * 360),
-            s = 55 + 数学.地板(数学.随机() * 25),
-            l = 10 + 数学.地板(数学.随机() * 10);
-        回归 { 实在在: 'hsl（' + h + ', ' + s + '%, ' + l + '%)' };
+    function getRandomColor() {
+        var h = Math.floor(Math.random() * 360),
+            s = 55 + Math.floor(Math.random() * 25),
+            l = 10 + Math.floor(Math.random() * 10);
+        return { solid: 'hsl(' + h + ', ' + s + '%, ' + l + '%)' };
     }
 
-    功能 生成引擎显示信息(名称) {
-        回归 {
-            图标: 名称.查拉特(0),
-            标志名称: 名称
+    function generateEngineDisplayInfo(name) {
+        return {
+            icon: name.charAt(0),
+            logoName: name
         };
     }
 
-    功能 safeGetStorage(说明, defaultValue) {
-        试试看 {
-            VAR 项目 = GM_getValue(说明);
-            回归 项目 !== 未定义 ? 项目 : defaultValue;
-        } 接住 (e) {
-            回归 defaultValue;
+    function safeGetStorage(key, defaultValue) {
+        try {
+            var item = GM_getValue(key);
+            return item !== undefined ? item : defaultValue;
+        } catch (e) {
+            return defaultValue;
         }
     }
 
-    功能 safeSetStorage(说明, 价值) {
-        试试看 {
-            GM_setValue(说明, 价值);
-        } 接住 (e) {
-            控制台.错误('GM存储写入失败:', e);
+    function safeSetStorage(key, value) {
+        try {
+            GM_setValue(key, value);
+        } catch (e) {
+            console.error('GM存储写入失败:', e);
         }
     }
 
-    VAR saveEnginesTimer = 无效;
-    VAR saveShortcutsTimer = 无效;
+    var saveEnginesTimer = null;
+    var saveShortcutsTimer = null;
 
     // ==================== 数据管理 ====================
 
-    VAR defaultEngines = {
-        百度: { 名称: “百度”, 网址: 'https://www.baidu.com/s?wd=', 启用: 确实如此 },
-        必应: { 名称: “叮”, 网址: 'https://www.bing.com/search?q=', 启用: 确实如此 },
-        鸭鸭: { 名称: “鸭鸭出击”, 网址: 'https://duckduckgo.com/?q=', 启用: 确实如此 },
-        谷歌: { 名称: “谷歌”, 网址: 'https://www.google.com/search?q=', 启用: 确实如此 }
+    var defaultEngines = {
+        baidu: { name: 'Baidu', url: 'https://www.baidu.com/s?wd=', enabled: true },
+        bing: { name: 'Bing', url: 'https://www.bing.com/search?q=', enabled: true },
+        duckduckgo: { name: 'DuckDuckGo', url: 'https://duckduckgo.com/?q=', enabled: true },
+        google: { name: 'Google', url: 'https://www.google.com/search?q=', enabled: true }
     };
 
-    VAR 默认快捷方式 = [
-        { 名称: “GitHub”, 网址: “https://github.com” },
-        { 名称: 'B站', 网址: “https://www.bilibili.com” },
+    var defaultShortcuts = [
+        { name: 'GitHub', url: 'https://github.com' },
+        { name: 'B站', url: 'https://www.bilibili.com' },
         { name: '邮箱', url: 'https://mail.google.com' },
         { name: '知乎', url: 'https://www.zhihu.com' },
         { name: '微博', url: 'https://weibo.com' },
@@ -745,56 +745,56 @@
     function performSearch() {
         var q = searchInput.value.trim();
         if (q && engines[currentEngine]) {
-            VAR u = 发动机[currentEngine].网址;
-            如果 (u.索引('{query}') !== -1) {
-                u = u.替换('{query}', encodeURIComponent(q));
-            } 否则 {
+            var u = engines[currentEngine].url;
+            if (u.indexOf('{query}') !== -1) {
+                u = u.replace('{query}', encodeURIComponent(q));
+            } else {
                 u += encodeURIComponent(q);
             }
-            窗户.位置.href = u;
+            window.location.href = u;
         }
     }
     
-    搜索按钮.addEventListener（事件听众）(“咔哒”, performSearch);
-    搜索输入.addEventListener（事件听众）(“按键”, 功能(e) {
-        如果 (e.说明 === “进来”) performSearch();
+    searchButton.addEventListener('click', performSearch);
+    searchInput.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') performSearch();
     });
 
     // ==================== 快捷方式 ====================
     
-    功能 渲染快捷方式() {
-        快捷方式容器.innerHTML = '';
-        VAR 碎片 = 文件.createDocumentFragment();
+    function renderShortcuts() {
+        shortcutsContainer.innerHTML = '';
+        var fragment = document.createDocumentFragment();
         
-        对于 (VAR i = 0; i < 捷径.长度; i++) {
-            VAR 嘘 = 捷径[i];
-            VAR 项目 = 文件.createElement('a');
-            项目.班级名称 = “快捷物品”;
-            项目.href = 嘘.网址;
-            项目.setAttribute(“rel”, “开封者”);
+        for (var i = 0; i < shortcuts.length; i++) {
+            var sh = shortcuts[i];
+            var item = document.createElement('a');
+            item.className = 'shortcut-item';
+            item.href = sh.url;
+            item.setAttribute('rel', 'noopener');
             
-            如果 (!快捷颜色[嘘.网址]) {
-                快捷颜色[嘘.网址] = getRandomColor();
+            if (!shortcutColors[sh.url]) {
+                shortcutColors[sh.url] = getRandomColor();
             }
-            VAR 颜色 = 快捷颜色[嘘.网址];
+            var color = shortcutColors[sh.url];
             
-            项目.innerHTML = 
-                '<div class="shortcut-icon" style="background:' + 颜色.实在在 + ';">' + 
-                    嘘.名称.查拉特(0) + 
-                '' +
-                跨度 级别=“捷径名”>“/跨度> + 嘘. 名称 + '';
+            item.innerHTML = 
+                '<div class="shortcut-icon" style="background:' + color.solid + ';">' + 
+                    sh.name.charAt(0) + 
+                '</div>' +
+                '<span class="shortcut-name">' + sh.name + '</span>';
             
-            碎片.附赠子(项目);
+            fragment.appendChild(item);
         }
         
-        快捷方式容器.附赠子(碎片);
+        shortcutsContainer.appendChild(fragment);
     }
 
     // ==================== 启动 ====================
     
     initData();
-    rebuildEngine下拉菜单();
-    渲染快捷方式();
-    更新时钟();
-    setInterval(更新时钟, 1000);
+    rebuildEngineDropdown();
+    renderShortcuts();
+    updateClock();
+    setInterval(updateClock, 1000);
 })();
