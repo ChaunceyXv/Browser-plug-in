@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         主页
 // @namespace    http://tampermonkey.net/
-// @version      1.22
+// @version      1.24
 // @description  自定义百度首页
 // @match        https://www.baidu.com/
 // @run-at       document-start
@@ -14,11 +14,14 @@
 
     // ==================== 工具函数 ====================
     
+    var colorSeed = 0;
+
     function getRandomColor(depth) {
         var d = depth || 25;
-        var h = Math.floor(Math.random() * 360),
-            s = 30 + Math.floor(Math.random() * 55),
-            l = d - 8 + Math.floor(Math.random() * 21);
+        var h = (colorSeed * 137.508) % 360;
+        colorSeed++;
+        var s = 30 + Math.floor(Math.random() * 55),
+            l = 15 + Math.floor(Math.random() * (d - 5));
         return { solid: 'hsl(' + h + ', ' + s + '%, ' + l + '%)' };
     }
 
@@ -175,6 +178,7 @@
     }
 
     function randomizeAllColors() {
+        colorSeed = Math.floor(Math.random() * 100);
         for (var key in engineColors) {
             engineColors[key] = getRandomColor(colorDepth);
         }
@@ -418,7 +422,7 @@
         
         var sliderInput = document.createElement('input');
         sliderInput.type = 'range';
-        sliderInput.min = '10';
+        sliderInput.min = '20';
         sliderInput.max = '50';
         sliderInput.value = colorDepth;
         sliderInput.className = 'depth-slider';
