@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         主页
 // @namespace    http://tampermonkey.net/
-// @version      1.24
+// @version      1.26
 // @description  自定义百度首页
 // @match        https://www.baidu.com/
 // @run-at       document-start
@@ -84,9 +84,11 @@
         shortcuts = safeGetStorage('shortcuts', JSON.parse(JSON.stringify(defaultShortcuts)));
         shortcutsVisible = safeGetStorage('shortcutsVisible', true);
         colorDepth = safeGetStorage('colorDepth', 25);
+        colorSeed = Math.floor(Math.random() * 100);
         
         cleanEngineOrder();
         rebuildAllDisplayInfo();
+        saveEnginesImmediate();
         selectCurrentEngine();
     }
 
@@ -149,6 +151,12 @@
         safeSetStorage('currentEngine', currentEngine);
     }
 
+    function saveEnginesImmediate() {
+        safeSetStorage('customEngines', engines);
+        safeSetStorage('engineOrder', engineOrder);
+        safeSetStorage('engineColors', engineColors);
+    }
+
     function saveEngines() {
         clearTimeout(saveEnginesTimer);
         saveEnginesTimer = setTimeout(function() {
@@ -156,6 +164,11 @@
             safeSetStorage('engineOrder', engineOrder);
             safeSetStorage('engineColors', engineColors);
         }, 100);
+    }
+
+    function saveShortcutsImmediate() {
+        safeSetStorage('shortcuts', shortcuts);
+        safeSetStorage('shortcutColors', shortcutColors);
     }
 
     function saveShortcuts() {
@@ -986,6 +999,7 @@
         
         shortcutsCard.classList.remove('hidden');
         var fragment = document.createDocumentFragment();
+        var hasNewColors = false;
         
         for (var i = 0; i < shortcuts.length; i++) {
             var sh = shortcuts[i];
@@ -996,6 +1010,7 @@
             
             if (!shortcutColors[sh.url]) {
                 shortcutColors[sh.url] = getRandomColor(colorDepth);
+                hasNewColors = true;
             }
             var color = shortcutColors[sh.url];
             
@@ -1026,6 +1041,10 @@
         }
         
         shortcutsContainer.appendChild(fragment);
+        
+        if (hasNewColors) {
+            saveShortcutsImmediate();
+        }
     }
 
     // ==================== 启动 ====================
