@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         聚合搜索引擎工具栏
 // @namespace    https://www.via.com
-// @version      2.11.9
+// @version      2.11.10
 // @description  移动端浏览器脚本：仅域名白名单生效。下滑显示工具栏，触摸不倒计时，离开后计时。主题跟随，支持编辑引擎，油猴菜单栏打开管理界面。内置7大搜索引擎，设置按钮固定右侧。
 // @author       Assistant
 // @match        *://*/*
@@ -196,9 +196,10 @@
                 if (toolbarElement) {
                     toolbarElement.style.opacity = '0';
                     toolbarElement.style.pointerEvents = 'none';
+                    toolbarElement.style.transform = 'translateY(20px)';
                 }
             }
-        }, 2000); // 修改为 1 秒
+        }, 2000);
     }
 
     function showToolbar(permanent = false) {
@@ -206,6 +207,7 @@
         if (hideTimeout) clearTimeout(hideTimeout);
         toolbarElement.style.opacity = '1';
         toolbarElement.style.pointerEvents = 'auto';
+        toolbarElement.style.transform = 'translateY(0)';
         if (!permanent) scheduleHide();
     }
 
@@ -215,6 +217,7 @@
         if (hideTimeout) clearTimeout(hideTimeout);
         toolbarElement.style.opacity = '0';
         toolbarElement.style.pointerEvents = 'none';
+        toolbarElement.style.transform = 'translateY(20px)';
     }
 
     function forceShowToolbar() {
@@ -223,6 +226,7 @@
         if (hideTimeout) clearTimeout(hideTimeout);
         toolbarElement.style.opacity = '1';
         toolbarElement.style.pointerEvents = 'auto';
+        toolbarElement.style.transform = 'translateY(0)';
     }
 
     function unforceShowToolbar() {
@@ -241,7 +245,6 @@
         toolbarElement.style.border = isDark ? '0.5px solid rgba(255,255,255,0.2)' : '0.5px solid rgba(0,0,0,0.1)';
         toolbarElement.style.boxShadow = isDark ? '0 4px 16px rgba(0,0,0,0.3)' : '0 4px 12px rgba(0,0,0,0.15)';
 
-        // 引擎按钮主题
         const engineBtns = toolbarElement.querySelectorAll('.agg-engine-btn');
         engineBtns.forEach(btn => {
             btn.style.background = isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)';
@@ -249,7 +252,6 @@
             btn.style.boxShadow = isDark ? '0 1px 2px rgba(0,0,0,0.1)' : '0 1px 2px rgba(0,0,0,0.05)';
         });
 
-        // 设置按钮主题
         const settingsBtn = toolbarElement.querySelector('#agg-settings-btn');
         if (settingsBtn) {
             settingsBtn.style.background = isDark ? 'rgba(70,70,90,0.9)' : 'rgba(200,200,210,0.9)';
@@ -351,19 +353,38 @@
             font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
             -webkit-tap-highlight-color: transparent;
             -webkit-overflow-scrolling: touch;
-            transition: opacity 0.2s ease, background 0.2s ease;
+            transition: opacity 0.3s ease, transform 0.3s ease, background 0.2s ease;
             opacity: 0; pointer-events: none;
+            transform: translateY(20px);
         `;
 
-        // 可滚动的引擎按钮容器
+        // 可滚动的引擎按钮容器 - 修复横向滚动条
         const engineScroll = document.createElement('div');
         engineScroll.id = 'agg-engine-scroll';
         engineScroll.style.cssText = `
-            display: flex; flex-wrap: nowrap; overflow-x: auto; gap: 4px;
-            flex: 1; min-width: 0;
-            scrollbar-width: thin;
+            display: flex;
+            flex-wrap: nowrap;
+            overflow-x: auto;
+            overflow-y: hidden;
+            gap: 4px;
+            flex: 1;
+            min-width: 0;
             -webkit-overflow-scrolling: touch;
             padding: 2px 0;
+            scrollbar-width: none;
+            -ms-overflow-style: none;
+            mask-image: linear-gradient(to right, 
+                transparent 0%, 
+                black 8px, 
+                black calc(100% - 8px), 
+                transparent 100%
+            );
+            -webkit-mask-image: linear-gradient(to right, 
+                transparent 0%, 
+                black 8px, 
+                black calc(100% - 8px), 
+                transparent 100%
+            );
         `;
 
         currentEngines.forEach(engine => {
@@ -376,11 +397,22 @@
                 cursor: pointer; white-space: nowrap; flex-shrink: 0;
                 letter-spacing: 0.5px;
                 transition: transform 0.1s ease, background 0.2s ease;
+                -webkit-tap-highlight-color: transparent;
             `;
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 onEngineClick(engine);
             });
+            // 添加触摸反馈
+            btn.addEventListener('touchstart', function() {
+                this.style.transform = 'scale(0.95)';
+            }, { passive: true });
+            btn.addEventListener('touchend', function() {
+                this.style.transform = 'scale(1)';
+            }, { passive: true });
+            btn.addEventListener('touchcancel', function() {
+                this.style.transform = 'scale(1)';
+            }, { passive: true });
             engineScroll.appendChild(btn);
         });
 
@@ -394,8 +426,18 @@
             cursor: pointer; white-space: nowrap; flex-shrink: 0;
             display: inline-flex; align-items: center; justify-content: center;
             transition: transform 0.1s ease, background 0.2s ease;
+            -webkit-tap-highlight-color: transparent;
         `;
         settingsBtn.addEventListener('click', () => openSettingsModal());
+        settingsBtn.addEventListener('touchstart', function() {
+            this.style.transform = 'scale(0.95)';
+        }, { passive: true });
+        settingsBtn.addEventListener('touchend', function() {
+            this.style.transform = 'scale(1)';
+        }, { passive: true });
+        settingsBtn.addEventListener('touchcancel', function() {
+            this.style.transform = 'scale(1)';
+        }, { passive: true });
 
         toolbar.appendChild(engineScroll);
         toolbar.appendChild(settingsBtn);
@@ -418,10 +460,20 @@
         hideToolbar();
     }
 
+    // 全局样式 - 包含滚动条隐藏
     const globalStyle = document.createElement('style');
     globalStyle.textContent = `
         #aggregated-search-toolbar button:active {
             transform: scale(0.96);
+        }
+        #agg-engine-scroll::-webkit-scrollbar {
+            display: none;
+            width: 0;
+            height: 0;
+        }
+        #agg-engine-scroll {
+            scrollbar-width: none;
+            -ms-overflow-style: none;
         }
     `;
     document.head.appendChild(globalStyle);
@@ -501,6 +553,7 @@
                         display: flex; align-items: center; justify-content: center;
                         color: white; font-size: 18px; font-weight: bold; cursor: pointer;
                         opacity: ${idx === 0 ? '0.4' : '1'};
+                        -webkit-tap-highlight-color: transparent;
                     `;
                     if (idx !== 0) {
                         upBtn.addEventListener('click', (e) => {
@@ -517,6 +570,7 @@
                         display: flex; align-items: center; justify-content: center;
                         color: white; font-size: 18px; font-weight: bold; cursor: pointer;
                         opacity: ${idx === currentEngines.length - 1 ? '0.4' : '1'};
+                        -webkit-tap-highlight-color: transparent;
                     `;
                     if (idx !== currentEngines.length - 1) {
                         downBtn.addEventListener('click', (e) => {
@@ -532,6 +586,7 @@
                         padding: 0 12px; height: 32px;
                         display: flex; align-items: center; justify-content: center;
                         color: white; font-size: 12px; font-weight: bold; cursor: pointer;
+                        -webkit-tap-highlight-color: transparent;
                     `;
                     delBtn.addEventListener('click', () => {
                         if (confirm(`确定删除「${engine.name}」吗？`)) {
