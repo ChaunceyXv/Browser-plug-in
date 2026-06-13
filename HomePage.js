@@ -1,0 +1,800 @@
+==用户脚本==
+// @name         主页
+@namespace http://tampermonkey.net/
+@version 1.11
+// @description  自定义百度首页
+@match https://www.baidu.com/
+@run-at document-start
+@grant GM_setValue
+@grant GM_getValue
+==/用户脚本==
+
+(功能() {
+    “用严格的”;
+
+    // ==================== 工具函数 ====================
+    
+    功能 getRandomColor() {
+        VAR h = 数学.地板(数学.随机() * 360),
+            s = 55 + 数学.地板(数学.随机() * 25),
+            l = 10 + 数学.地板(数学.随机() * 10);
+        回归 { 实在在: 'hsl（' + h + ', ' + s + '%, ' + l + '%)' };
+    }
+
+    功能 生成引擎显示信息(名称) {
+        回归 {
+            图标: 名称.查拉特(0),
+            标志名称: 名称
+        };
+    }
+
+    功能 safeGetStorage(说明, defaultValue) {
+        试试看 {
+            VAR 项目 = GM_getValue(说明);
+            回归 项目 !== 未定义 ? 项目 : defaultValue;
+        } 接住 (e) {
+            回归 defaultValue;
+        }
+    }
+
+    功能 safeSetStorage(说明, 价值) {
+        试试看 {
+            GM_setValue(说明, 价值);
+        } 接住 (e) {
+            控制台.错误('GM存储写入失败:', e);
+        }
+    }
+
+    VAR saveEnginesTimer = 无效;
+    VAR saveShortcutsTimer = 无效;
+
+    // ==================== 数据管理 ====================
+
+    VAR defaultEngines = {
+        百度: { 名称: “百度”, 网址: 'https://www.baidu.com/s?wd=', 启用: 确实如此 },
+        必应: { 名称: “叮”, 网址: 'https://www.bing.com/search?q=', 启用: 确实如此 },
+        鸭鸭: { 名称: “鸭鸭出击”, 网址: 'https://duckduckgo.com/?q=', 启用: 确实如此 },
+        谷歌: { 名称: “谷歌”, 网址: 'https://www.google.com/search?q=', 启用: 确实如此 }
+    };
+
+    VAR 默认快捷方式 = [
+        { 名称: “GitHub”, 网址: “https://github.com” },
+        { 名称: 'B站', 网址: “https://www.bilibili.com” },
+        { name: '邮箱', url: 'https://mail.google.com' },
+        { name: '知乎', url: 'https://www.zhihu.com' },
+        { name: '微博', url: 'https://weibo.com' },
+        { name: '贴吧', url: 'https://tieba.baidu.com' },
+        { name: '淘宝', url: 'https://www.taobao.com' },
+        { name: '京东', url: 'https://www.jd.com' }
+    ];
+
+    var engines = {};
+    var engineDisplayInfo = {};
+    var engineColors = {};
+    var engineOrder = [];
+    var currentEngine = '';
+    var shortcuts = [];
+    var shortcutColors = {};
+    var isSettingsOpen = false;
+
+    function initData() {
+        engines = safeGetStorage('customEngines', JSON.parse(JSON.stringify(defaultEngines)));
+        engineOrder = safeGetStorage('engineOrder', Object.keys(engines));
+        engineColors = safeGetStorage('engineColors', {});
+        shortcutColors = safeGetStorage('shortcutColors', {});
+        shortcuts = safeGetStorage('shortcuts', JSON.parse(JSON.stringify(defaultShortcuts)));
+        
+        cleanEngineOrder();
+        rebuildAllDisplayInfo();
+        selectCurrentEngine();
+    }
+
+    function cleanEngineOrder() {
+        var seen = {};
+        var validOrder = [];
+        
+        for (var i = 0; i < engineOrder.length; i++) {
+            var key = engineOrder[i];
+            if (engines[key] && !seen[key]) {
+                validOrder.push(key);
+                seen[key] = true;
+            }
+        }
+        
+        for (var key in engines) {
+            if (!seen[key]) {
+                validOrder.push(key);
+            }
+        }
+        
+        engineOrder = validOrder;
+    }
+
+    function rebuildAllDisplayInfo() {
+        for (var key in engines) {
+            rebuildSingleDisplayInfo(key);
+        }
+    }
+
+    function rebuildSingleDisplayInfo(key) {
+        if (!engines[key]) return;
+        engineDisplayInfo[key] = generateEngineDisplayInfo(engines[key].name);
+        if (!engineColors[key]) {
+            engineColors[key] = getRandomColor();
+        }
+    }
+
+    function selectCurrentEngine() {
+        var saved = safeGetStorage('currentEngine', null);
+        if (saved && engines[saved] && engines[saved].enabled) {
+            currentEngine = saved;
+            return;
+        }
+        
+        for (var i = 0; i < engineOrder.length; i++) {
+            var key = engineOrder[i];
+            if (engines[key] && engines[key].enabled) {
+                currentEngine = key;
+                return;
+            }
+        }
+        var keys = Object.keys(engines);
+        currentEngine = keys.length > 0 ? keys[0] : 'baidu';
+    }
+
+    function switchEngine(key) {
+        if (currentEngine === key) return;
+        currentEngine = key;
+        safeSetStorage('currentEngine', currentEngine);
+    }
+
+    function saveEngines() {
+        clearTimeout(saveEnginesTimer);
+        saveEnginesTimer = setTimeout(function() {
+            safeSetStorage('customEngines', engines);
+            safeSetStorage('engineOrder', engineOrder);
+            safeSetStorage('engineColors', engineColors);
+        }, 100);
+    }
+
+    function saveShortcuts() {
+        clearTimeout(saveShortcutsTimer);
+        saveShortcutsTimer = setTimeout(function() {
+            safeSetStorage('shortcuts', shortcuts);
+            safeSetStorage('shortcutColors', shortcutColors);
+        }, 100);
+    }
+
+    // ==================== UI更新函数 ====================
+
+    function updateLogo() {
+        var info = engineDisplayInfo[currentEngine];
+        if (!info) return;
+        engineLogo.textContent = info.logoName;
+        engineLogo.style.color = engineColors[currentEngine].solid;
+    }
+
+    function updateCurrentEngineDisplay() {
+        var info = engineDisplayInfo[currentEngine];
+        if (!info || !engines[currentEngine]) return;
+        
+        currentEngineIcon.textContent = info.icon;
+        currentEngineIcon.style.background = engineColors[currentEngine].solid;
+        currentEngineName.textContent = engines[currentEngine].name;
+        searchButton.style.background = engineColors[currentEngine].solid;
+        updateLogo();
+    }
+
+    function rebuildEngineDropdown() {
+        var html = '';
+        var firstEnabled = null;
+        
+        for (var i = 0; i < engineOrder.length; i++) {
+            var key = engineOrder[i];
+            if (!engines[key] || !engines[key].enabled) continue;
+            
+            if (!firstEnabled) firstEnabled = key;
+            if (!engineDisplayInfo[key]) {
+                rebuildSingleDisplayInfo(key);
+            }
+            
+            var info = engineDisplayInfo[key];
+            var act = key === currentEngine ? ' active' : '';
+            
+            html += '<div class="engine-option' + act + '" data-engine="' + key + '">' +
+                '<span class="engine-icon engine-option-icon" style="background:' + engineColors[key].solid + '">' + 
+                    info.icon + 
+                '</span>' +
+                engines[key].name + 
+            '</div>';
+        }
+        
+        engineDropdown.innerHTML = html;
+        
+        if (!engines[currentEngine] || !engines[currentEngine].enabled) {
+            if (firstEnabled) {
+                switchEngine(firstEnabled);
+            } else if (engineOrder.length > 0) {
+                switchEngine(engineOrder[0]);
+            }
+        }
+        
+        updateCurrentEngineDisplay();
+        
+        var opts = engineDropdown.querySelectorAll('.engine-option');
+        for (var j = 0; j < opts.length; j++) {
+            opts[j].addEventListener('click', function(e) {
+                e.stopPropagation();
+                switchEngine(this.dataset.engine);
+                rebuildEngineDropdown();
+                engineDropdown.classList.remove('show');
+                dropdownArrow.classList.remove('open');
+            });
+        }
+    }
+
+    function addCustomEngine(name, url) {
+        var key = 'custom_' + Date.now();
+        engines[key] = { name: name, url: url, enabled: true };
+        engineColors[key] = getRandomColor();
+        engineOrder.push(key);
+        rebuildSingleDisplayInfo(key);
+        saveEngines();
+    }
+
+    function deleteEngine(key) {
+        if (key.indexOf('custom_') !== 0) return;
+        if (!confirm('确定删除「' + engines[key].name + '」吗？')) return;
+        
+        delete engines[key];
+        var idx = engineOrder.indexOf(key);
+        if (idx !== -1) engineOrder.splice(idx, 1);
+        delete engineDisplayInfo[key];
+        delete engineColors[key];
+        
+        if (currentEngine === key) {
+            selectCurrentEngine();
+        }
+        
+        saveEngines();
+    }
+
+    function moveEngine(idx, dir) {
+        var newIdx = idx + dir;
+        if (newIdx < 0 || newIdx >= engineOrder.length) return;
+        
+        var key = engineOrder[idx];
+        engineOrder.splice(idx, 1);
+        engineOrder.splice(newIdx, 0, key);
+        
+        saveEngines();
+        rebuildEngineDropdown();
+        renderEngineSettings();
+    }
+
+    function moveShortcut(idx, dir) {
+        var newIdx = idx + dir;
+        if (newIdx < 0 || newIdx >= shortcuts.length) return;
+        
+        var item = shortcuts[idx];
+        shortcuts.splice(idx, 1);
+        shortcuts.splice(newIdx, 0, item);
+        
+        saveShortcuts();
+        renderShortcuts();
+        renderShortcutSettings();
+    }
+
+    // ==================== 设置面板 ====================
+
+    function renderMainMenu() {
+        sheetTitle.textContent = '设置';
+        sheetContent.innerHTML = '';
+        
+        var items = [
+            { id: 'menuShortcuts', icon: '🔗', text: '管理快捷方式' },
+            { id: 'menuEngines', icon: '🔍', text: '搜索引擎设置' }
+        ];
+        
+        for (var i = 0; i < items.length; i++) {
+            if (i > 0) {
+                var d = document.createElement('div');
+                d.className = 'sheet-divider';
+                sheetContent.appendChild(d);
+            }
+            
+            var el = document.createElement('div');
+            el.className = 'sheet-menu-item';
+            el.id = items[i].id;
+            el.innerHTML = '<span class="sheet-menu-icon">' + items[i].icon + '</span><span>' + items[i].text + '</span>';
+            sheetContent.appendChild(el);
+        }
+        
+        document.getElementById('menuShortcuts').addEventListener('click', renderShortcutSettings);
+        document.getElementById('menuEngines').addEventListener('click', renderEngineSettings);
+    }
+
+    function renderShortcutSettings() {
+        sheetTitle.textContent = '管理快捷方式';
+        sheetContent.innerHTML = '';
+        
+        if (shortcuts.length === 0) {
+            var emptyDiv = document.createElement('div');
+            emptyDiv.className = 'sheet-menu-item';
+            emptyDiv.textContent = '暂无快捷方式';
+            emptyDiv.style.justifyContent = 'center';
+            emptyDiv.style.color = '#999';
+            sheetContent.appendChild(emptyDiv);
+        }
+        
+        for (var i = 0; i < shortcuts.length; i++) {
+            (function(index) {
+                var sh = shortcuts[index];
+                var row = document.createElement('div');
+                row.className = 'engine-setting-row';
+                
+                var orderCol = document.createElement('div');
+                orderCol.className = 'engine-setting-order';
+                
+                var upBtn = document.createElement('button');
+                upBtn.className = 'engine-order-btn';
+                upBtn.textContent = '▲';
+                upBtn.title = '上移';
+                if (index === 0) upBtn.disabled = true;
+                upBtn.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    moveShortcut(index, -1);
+                });
+                
+                var downBtn = document.createElement('button');
+                downBtn.className = 'engine-order-btn';
+                downBtn.textContent = '▼';
+                downBtn.title = '下移';
+                if (index === shortcuts.length - 1) downBtn.disabled = true;
+                downBtn.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    moveShortcut(index, 1);
+                });
+                
+                orderCol.appendChild(upBtn);
+                orderCol.appendChild(downBtn);
+                row.appendChild(orderCol);
+                
+                var infoDiv = document.createElement('div');
+                infoDiv.className = 'engine-setting-info';
+                
+                if (!shortcutColors[sh.url]) {
+                    shortcutColors[sh.url] = getRandomColor();
+                }
+                
+                infoDiv.innerHTML = 
+                    '<div class="engine-setting-icon" style="background:' + shortcutColors[sh.url].solid + '">' + 
+                        sh.name.charAt(0) + 
+                    '</div>' +
+                    '<span class="engine-setting-name">' + sh.name + '</span>';
+                row.appendChild(infoDiv);
+                
+                var spacer = document.createElement('div');
+                spacer.style.flex = '1';
+                row.appendChild(spacer);
+                
+                var delCol = document.createElement('div');
+                delCol.className = 'engine-setting-delete';
+                var delBtn = document.createElement('button');
+                delBtn.className = 'engine-delete-btn';
+                delBtn.textContent = '✕';
+                delBtn.title = '删除';
+                delBtn.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    var removed = shortcuts.splice(index, 1)[0];
+                    var urlStillUsed = false;
+                    for (var k = 0; k < shortcuts.length; k++) {
+                        if (shortcuts[k].url === removed.url) {
+                            urlStillUsed = true;
+                            break;
+                        }
+                    }
+                    if (!urlStillUsed) delete shortcutColors[removed.url];
+                    saveShortcuts();
+                    renderShortcuts();
+                    renderShortcutSettings();
+                });
+                delCol.appendChild(delBtn);
+                row.appendChild(delCol);
+                
+                sheetContent.appendChild(row);
+                
+                if (index < shortcuts.length - 1) {
+                    var divider = document.createElement('div');
+                    divider.className = 'sheet-divider';
+                    sheetContent.appendChild(divider);
+                }
+            })(i);
+        }
+        
+        var d1 = document.createElement('div');
+        d1.className = 'sheet-divider';
+        sheetContent.appendChild(d1);
+        
+        var addBtn = document.createElement('div');
+        addBtn.className = 'sheet-menu-item';
+        
+        if (shortcuts.length >= 12) {
+            addBtn.style.opacity = '0.4';
+            addBtn.style.pointerEvents = 'none';
+            addBtn.innerHTML = '<span class="sheet-menu-icon">➕</span><span>添加快捷方式（已达上限12个）</span>';
+        } else {
+            addBtn.innerHTML = '<span class="sheet-menu-icon">➕</span><span>添加快捷方式</span>';
+            addBtn.addEventListener('click', function() {
+                var name = prompt('请输入快捷方式名称：');
+                if (!name) return;
+                var url = prompt('请输入URL（需包含 https://）：');
+                if (!url) return;
+                if (url.indexOf('://') === -1) url = 'https://' + url;
+                shortcuts.push({ name: name, url: url });
+                shortcutColors[url] = getRandomColor();
+                saveShortcuts();
+                renderShortcuts();
+                renderShortcutSettings();
+            });
+        }
+        sheetContent.appendChild(addBtn);
+        
+        var d2 = document.createElement('div');
+        d2.className = 'sheet-divider';
+        sheetContent.appendChild(d2);
+        
+        var backBtn = document.createElement('div');
+        backBtn.className = 'sheet-menu-item';
+        backBtn.innerHTML = '<span class="sheet-menu-icon">←</span><span>返回</span>';
+        backBtn.addEventListener('click', renderMainMenu);
+        sheetContent.appendChild(backBtn);
+    }
+
+    function renderEngineSettings() {
+        sheetTitle.textContent = '搜索引擎设置';
+        sheetContent.innerHTML = '';
+        
+        if (engineOrder.length === 0) {
+            var emptyDiv = document.createElement('div');
+            emptyDiv.className = 'sheet-menu-item';
+            emptyDiv.textContent = '暂无搜索引擎';
+            emptyDiv.style.justifyContent = 'center';
+            emptyDiv.style.color = '#999';
+            sheetContent.appendChild(emptyDiv);
+        }
+        
+        for (var i = 0; i < engineOrder.length; i++) {
+            (function(index) {
+                var key = engineOrder[index];
+                var eng = engines[key];
+                if (!eng) return;
+                
+                if (!engineDisplayInfo[key]) {
+                    rebuildSingleDisplayInfo(key);
+                }
+                
+                var info = engineDisplayInfo[key];
+                var row = document.createElement('div');
+                row.className = 'engine-setting-row';
+                
+                var orderCol = document.createElement('div');
+                orderCol.className = 'engine-setting-order';
+                
+                var upBtn = document.createElement('button');
+                upBtn.className = 'engine-order-btn';
+                upBtn.textContent = '▲';
+                upBtn.title = '上移';
+                if (index === 0) upBtn.disabled = true;
+                upBtn.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    moveEngine(index, -1);
+                });
+                
+                var downBtn = document.createElement('button');
+                downBtn.className = 'engine-order-btn';
+                downBtn.textContent = '▼';
+                downBtn.title = '下移';
+                if (index === engineOrder.length - 1) downBtn.disabled = true;
+                downBtn.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    moveEngine(index, 1);
+                });
+                
+                orderCol.appendChild(upBtn);
+                orderCol.appendChild(downBtn);
+                row.appendChild(orderCol);
+                
+                var infoDiv = document.createElement('div');
+                infoDiv.className = 'engine-setting-info';
+                infoDiv.innerHTML = 
+                    '<div class="engine-setting-icon" style="background:' + engineColors[key].solid + '">' + 
+                        info.icon + 
+                    '</div>' +
+                    '<span class="engine-setting-name">' + eng.name + '</span>';
+                row.appendChild(infoDiv);
+                
+                var toggle = document.createElement('div');
+                toggle.className = 'engine-setting-toggle' + (eng.enabled ? ' active' : '');
+                toggle.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    var newEnabled = !engines[key].enabled;
+                    engines[key].enabled = newEnabled;
+                    if (newEnabled) {
+                        toggle.classList.add('active');
+                    } else {
+                        toggle.classList.remove('active');
+                    }
+                    saveEngines();
+                    if (key === currentEngine && !newEnabled) {
+                        rebuildEngineDropdown();
+                    }
+                });
+                row.appendChild(toggle);
+                
+                var delCol = document.createElement('div');
+                delCol.className = 'engine-setting-delete';
+                if (key.indexOf('custom_') === 0) {
+                    var delBtn = document.createElement('button');
+                    delBtn.className = 'engine-delete-btn';
+                    delBtn.textContent = '✕';
+                    delBtn.title = '删除';
+                    delBtn.addEventListener('click', function(e) {
+                        e.stopPropagation();
+                        deleteEngine(key);
+                        rebuildEngineDropdown();
+                        renderEngineSettings();
+                    });
+                    delCol.appendChild(delBtn);
+                }
+                row.appendChild(delCol);
+                
+                sheetContent.appendChild(row);
+                
+                if (index < engineOrder.length - 1) {
+                    var divider = document.createElement('div');
+                    divider.className = 'sheet-divider';
+                    sheetContent.appendChild(divider);
+                }
+            })(i);
+        }
+        
+        var d1 = document.createElement('div');
+        d1.className = 'sheet-divider';
+        sheetContent.appendChild(d1);
+        
+        var addBtn = document.createElement('div');
+        addBtn.className = 'sheet-menu-item';
+        addBtn.innerHTML = '<span class="sheet-menu-icon">➕</span><span>添加搜索引擎</span>';
+        addBtn.addEventListener('click', function() {
+            var name = prompt('请输入搜索引擎名称：');
+            if (!name) return;
+            var url = prompt('请输入搜索URL（{query}代替搜索词）：\n\n示例：https://www.sogou.com/web?query={query}');
+            if (!url) return;
+            
+            addCustomEngine(name, url);
+            rebuildEngineDropdown();
+            renderEngineSettings();
+        });
+        sheetContent.appendChild(addBtn);
+        
+        var d2 = document.createElement('div');
+        d2.className = 'sheet-divider';
+        sheetContent.appendChild(d2);
+        
+        var backBtn = document.createElement('div');
+        backBtn.className = 'sheet-menu-item';
+        backBtn.innerHTML = '<span class="sheet-menu-icon">←</span><span>返回</span>';
+        backBtn.addEventListener('click', renderMainMenu);
+        sheetContent.appendChild(backBtn);
+    }
+
+    // ==================== HTML模板 ====================
+
+    document.open();
+    document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no"><title>主页</title><style>*{margin:0;padding:0;box-sizing:border-box}html,body{width:100%;height:100%;overflow:hidden}body{background:#f0f2f5;display:flex;justify-content:center;align-items:center;flex-direction:column;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;-webkit-user-select:none;user-select:none}.search-container{width:100%;max-width:640px;padding:0 20px;display:flex;flex-direction:column;align-items:center;gap:16px}.corner-strip{position:fixed;z-index:100;background:#fff;box-shadow:0 4px 16px rgba(0,0,0,0.1);user-select:none;-webkit-tap-highlight-color:transparent}.clock-wrapper{left:0;top:60px;border-radius:0 12px 12px 0;padding:16px 20px 16px 14px;margin-left:-120px;display:flex;flex-direction:column;text-align:left;animation:slideInLeft 0.6s ease-out 0.3s forwards;transition:margin-left 0.3s ease,box-shadow 0.3s ease,padding-left 0.3s ease}.clock-wrapper.show{margin-left:0!important;box-shadow:2px 6px 24px rgba(0,0,0,0.18);padding-left:20px}@keyframes slideInLeft{from{margin-left:-120px}to{margin-left:-8px}}.clock-time{font-size:28px;font-weight:700;color:#333;letter-spacing:1px;line-height:1;margin-bottom:6px}.clock-date{font-size:12px;color:#999;letter-spacing:0.5px;line-height:1.5}.settings-wrapper{right:0;top:16px;border-radius:12px 0 0 12px;padding:12px 35px;margin-right:-98px;cursor:pointer;transition:margin-right 0.3s ease,box-shadow 0.3s ease}.settings-wrapper.show{margin-right:0!important;box-shadow:-2px 6px 24px rgba(0,0,0,0.18)}.settings-icon{width:28px;height:28px;display:flex;align-items:center;justify-content:center;color:#666;font-size:20px;border-radius:6px}.card{background:#fff;border-radius:16px;box-shadow:0 2px 12px rgba(0,0,0,0.08),0 8px 32px rgba(0,0,0,0.06);padding:28px 24px;width:100%;transition:all 0.3s ease;display:flex;flex-direction:column;align-items:center}.card:hover{box-shadow:0 4px 16px rgba(0,0,0,0.1),0 12px 40px rgba(0,0,0,0.08)}.shortcuts-card{background:#fff;border-radius:16px;box-shadow:0 2px 12px rgba(0,0,0,0.08),0 8px 32px rgba(0,0,0,0.06);padding:20px 24px;width:100%;transition:all 0.3s ease}.shortcuts-card:hover{box-shadow:0 4px 16px rgba(0,0,0,0.1),0 12px 40px rgba(0,0,0,0.08)}.engine-logo{font-size:52px;font-weight:900;margin-bottom:50px;user-select:none;letter-spacing:3px;color:#fff;text-shadow:0 1px 0 #ccc,0 2px 0 #c9c9c9,0 3px 0 #bbb,0 4px 0 #b9b9b9,0 5px 0 #aaa,0 6px 1px rgba(0,0,0,.1),0 0 5px rgba(0,0,0,.1),0 1px 3px rgba(0,0,0,.3),0 3px 5px rgba(0,0,0,.2),0 5px 10px rgba(0,0,0,.25),0 10px 10px rgba(0,0,0,.2),0 20px 20px rgba(0,0,0,.15)}.search-box{display:flex;align-items:center;border:2px solid #e8eaed;border-radius:24px;padding:8px 8px 8px 12px;transition:all 0.3s ease;background:#fff;gap:8px;width:100%}.search-box:focus-within{border-color:#4e6ef2;box-shadow:0 2px 8px rgba(78,110,242,0.15)}.engine-selector{display:flex;align-items:center;cursor:pointer;position:relative;user-select:none;flex-shrink:0;min-width:0}.current-engine{display:flex;align-items:center;gap:6px;font-size:14px;color:#333;white-space:nowrap;overflow:hidden}.engine-icon{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:bold;color:#fff;flex-shrink:0}.engine-name{max-width:60px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dropdown-arrow{font-size:10px;color:#999;transition:transform 0.3s ease;flex-shrink:0}.dropdown-arrow.open{transform:rotate(180deg)}.engine-dropdown{position:absolute;top:calc(100% + 8px);left:0;background:#fff;border:1px solid #e0e0e0;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);min-width:120px;display:none;z-index:1000}.engine-dropdown.show{display:block}.engine-option{display:flex;align-items:center;gap:8px;padding:10px 12px;cursor:pointer;transition:background 0.2s ease;font-size:14px;color:#333}.engine-option:first-child{border-radius:8px 8px 0 0}.engine-option:last-child{border-radius:0 0 8px 8px}.engine-option:hover{background:#f5f5f5}.engine-option.active{background:#f0f3ff;color:#4e6ef2}.search-input{flex:1;min-width:0;border:none;outline:none;font-size:16px;padding:8px 4px;color:#333;-webkit-user-select:text;user-select:text}.search-input::placeholder{color:#999}.search-button{border:none;color:#fff;width:36px;height:36px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.3s ease;flex-shrink:0}.search-button:hover{filter:brightness(0.9);transform:scale(1.05)}.search-button svg{width:18px;height:18px}.shortcuts{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.shortcut-item{display:flex;flex-direction:column;align-items:center;gap:8px;cursor:pointer;padding:12px 8px;border-radius:12px;transition:all 0.2s ease;text-decoration:none;color:#333;touch-action:manipulation}.shortcut-item:hover{background:#f5f7fa;transform:translateY(-3px)}.shortcut-icon{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:bold;color:#fff;box-shadow:0 3px 0 rgba(0,0,0,0.3),0 6px 12px rgba(0,0,0,0.2),0 10px 20px rgba(0,0,0,0.1),inset 0 2px 4px rgba(255,255,255,0.3),inset 0 -2px 4px rgba(0,0,0,0.1);transition:all 0.2s ease}.shortcut-item:hover .shortcut-icon{box-shadow:0 5px 0 rgba(0,0,0,0.35),0 10px 20px rgba(0,0,0,0.25),0 15px 30px rgba(0,0,0,0.15),inset 0 3px 6px rgba(255,255,255,0.35),inset 0 -3px 6px rgba(0,0,0,0.15);transform:translateY(-2px)}.shortcut-name{font-size:12px;color:#666;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center}.overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.4);z-index:200;opacity:0;pointer-events:none;transition:opacity 0.3s ease}.overlay.show{opacity:1;pointer-events:auto}.bottom-sheet{position:fixed;bottom:0;left:0;width:100%;background:#fff;border-radius:20px 20px 0 0;z-index:201;transform:translateY(100%);transition:transform 0.35s ease-out;max-height:55vh;overflow-y:auto;padding:8px 0 24px;-webkit-overflow-scrolling:touch}.bottom-sheet.show{transform:translateY(0)}.sheet-handle{width:36px;height:5px;background:#ddd;border-radius:3px;margin:8px auto 16px}.sheet-title{font-size:16px;font-weight:600;color:#333;text-align:center;margin-bottom:16px}.sheet-menu-item{display:flex;align-items:center;gap:12px;padding:14px 24px;cursor:pointer;transition:background 0.2s ease;font-size:15px;color:#333}.sheet-menu-item:active{background:#f5f5f5}.sheet-menu-icon{width:24px;height:24px;display:flex;align-items:center;justify-content:center;font-size:18px}.sheet-divider{height:1px;background:#f0f0f0;margin:4px 0}.engine-setting-row{display:flex;align-items:center;padding:10px 16px;gap:10px}.engine-setting-order{display:flex;flex-direction:column;gap:2px;flex-shrink:0;width:28px}.engine-order-btn{width:28px;height:18px;border:none;background:#f0f0f0;color:#666;font-size:9px;cursor:pointer;border-radius:4px;display:flex;align-items:center;justify-content:center}.engine-order-btn:active{background:#ddd}.engine-order-btn:disabled{opacity:0.25}.engine-setting-info{display:flex;align-items:center;gap:10px;flex:1;min-width:0}.engine-setting-icon{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:bold;color:#fff;flex-shrink:0}.engine-setting-name{font-size:14px;color:#333}.engine-setting-toggle{width:44px;height:26px;border-radius:13px;background:#ddd;cursor:pointer;transition:background 0.3s ease;position:relative;flex-shrink:0}.engine-setting-toggle.active{background:#4e6ef2}.engine-setting-toggle::after{content:"";position:absolute;top:2px;left:2px;width:22px;height:22px;border-radius:50%;background:#fff;transition:left 0.3s ease;box-shadow:0 1px 3px rgba(0,0,0,0.2)}.engine-setting-toggle.active::after{left:20px}.engine-setting-delete{flex-shrink:0;width:28px;display:flex;align-items:center;justify-content:center}.engine-delete-btn{width:26px;height:26px;border-radius:50%;border:none;background:#fee;color:#e55;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center}.engine-delete-btn:active{background:#fcc}@media(max-width:480px){.engine-logo{font-size:40px;margin-bottom:32px}.shortcuts{grid-template-columns:repeat(4,1fr);gap:4px}.shortcut-item{padding:8px 4px}.engine-name{max-width:48px}}</style></head><body><div class="corner-strip clock-wrapper" id="clockWrapper"><div class="clock-time" id="clockTime"></div><div class="clock-date" id="clockDate"></div></div><div class="corner-strip settings-wrapper" id="settingsWrapper"><div class="settings-icon" title="设置" id="btnSettings">⚙️</div></div><div class="overlay" id="overlay"></div><div class="bottom-sheet" id="bottomSheet"><div class="sheet-handle"></div><div class="sheet-title" id="sheetTitle">设置</div><div id="sheetContent"></div></div><div class="search-container"><div class="card"><div class="engine-logo" id="engineLogo"></div><div class="search-box"><div class="engine-selector" id="engineSelector"><div class="current-engine"><span class="engine-icon" id="currentEngineIcon"></span><span class="engine-name" id="currentEngineName"></span></div><span class="dropdown-arrow" id="dropdownArrow">▼</span><div class="engine-dropdown" id="engineDropdown"></div></div><input type="text" class="search-input" id="searchInput" placeholder="输入搜索内容..."><button class="search-button" id="searchButton"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.35-4.35"></path></svg></button></div></div><div class="shortcuts-card"><div class="shortcuts" id="shortcutsContainer"></div></div></div></body></html>');
+    document.close();
+
+    // ==================== 全局事件 ====================
+
+    document.addEventListener('contextmenu', function(e) {
+        e.preventDefault();
+    });
+
+    document.addEventListener('selectstart', function(e) {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+            return;
+        }
+        e.preventDefault();
+    });
+
+    // ==================== DOM引用 ====================
+    
+    var engineLogo = document.getElementById('engineLogo'),
+        engineSelector = document.getElementById('engineSelector'),
+        engineDropdown = document.getElementById('engineDropdown'),
+        dropdownArrow = document.getElementById('dropdownArrow'),
+        currentEngineIcon = document.getElementById('currentEngineIcon'),
+        currentEngineName = document.getElementById('currentEngineName'),
+        searchInput = document.getElementById('searchInput'),
+        searchButton = document.getElementById('searchButton'),
+        overlay = document.getElementById('overlay'),
+        bottomSheet = document.getElementById('bottomSheet'),
+        sheetTitle = document.getElementById('sheetTitle'),
+        sheetContent = document.getElementById('sheetContent'),
+        settingsWrapper = document.getElementById('settingsWrapper'),
+        clockWrapper = document.getElementById('clockWrapper'),
+        shortcutsContainer = document.getElementById('shortcutsContainer');
+
+    // ==================== 界面控制 ====================
+    
+    function openBS() {
+        if (isSettingsOpen) return;
+        isSettingsOpen = true;
+        overlay.classList.add('show');
+        bottomSheet.classList.add('show');
+    }
+    
+    function closeBS() {
+        isSettingsOpen = false;
+        overlay.classList.remove('show');
+        bottomSheet.classList.remove('show');
+    }
+    
+    overlay.addEventListener('click', closeBS);
+    
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && isSettingsOpen) {
+            closeBS();
+        }
+    });
+
+    // ==================== 时钟 ====================
+    
+    var clockTimer = null;
+    
+    clockWrapper.addEventListener('click', function(e) {
+        e.stopPropagation();
+        if (!clockWrapper.classList.contains('show')) {
+            clockWrapper.classList.add('show');
+            clearTimeout(clockTimer);
+            clockTimer = setTimeout(function() {
+                clockWrapper.classList.remove('show');
+            }, 1000);
+        }
+    });
+    
+    document.addEventListener('click', function() {
+        if (clockWrapper.classList.contains('show')) {
+            clockWrapper.classList.remove('show');
+            clearTimeout(clockTimer);
+        }
+    });
+
+    function updateClock() {
+        var n = new Date();
+        document.getElementById('clockTime').textContent =
+            n.getHours().toString().padStart(2, '0') + ':' +
+            n.getMinutes().toString().padStart(2, '0') + ':' +
+            n.getSeconds().toString().padStart(2, '0');
+        
+        var w = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
+        document.getElementById('clockDate').textContent =
+            n.getFullYear() + '年' + (n.getMonth() + 1) + '月' + n.getDate() + '日 ' + w[n.getDay()];
+    }
+
+    // ==================== 设置按钮 ====================
+    
+    document.getElementById('btnSettings').addEventListener('click', function(e) {
+        e.stopPropagation();
+        if (isSettingsOpen) return;
+        settingsWrapper.classList.add('show');
+        setTimeout(function() {
+            renderMainMenu();
+            openBS();
+            settingsWrapper.classList.remove('show');
+        }, 200);
+    });
+    
+    settingsWrapper.addEventListener('click', function(e) {
+        e.stopPropagation();
+        if (!settingsWrapper.classList.contains('show')) {
+            settingsWrapper.classList.add('show');
+            setTimeout(function() {
+                settingsWrapper.classList.remove('show');
+            }, 1500);
+        }
+    });
+    
+    document.addEventListener('click', function() {
+        if (settingsWrapper.classList.contains('show')) {
+            settingsWrapper.classList.remove('show');
+        }
+    });
+
+    settingsWrapper.style.transition = 'none';
+    settingsWrapper.style.marginRight = '-98px';
+    
+    setTimeout(function() {
+        settingsWrapper.style.transition = 'margin-right 0.5s ease-out';
+        settingsWrapper.style.marginRight = '0';
+        setTimeout(function() {
+            settingsWrapper.style.transition = 'margin-right 0.5s ease-in';
+            settingsWrapper.style.marginRight = '-63px';
+            setTimeout(function() {
+                settingsWrapper.style.transition = 'margin-right 0.3s ease, box-shadow 0.3s ease';
+            }, 500);
+        }, 800);
+    }, 500);
+
+    // ==================== 搜索引擎下拉 ====================
+    
+    engineSelector.addEventListener('click', function(e) {
+        e.stopPropagation();
+        engineDropdown.classList.toggle('show');
+        dropdownArrow.classList.toggle('open');
+    });
+    
+    document.addEventListener('click', function() {
+        engineDropdown.classList.remove('show');
+        dropdownArrow.classList.remove('open');
+    });
+
+    // ==================== 搜索 ====================
+    
+    function performSearch() {
+        var q = searchInput.value.trim();
+        if (q && engines[currentEngine]) {
+            VAR u = 发动机[currentEngine].网址;
+            如果 (u.索引('{query}') !== -1) {
+                u = u.替换('{query}', encodeURIComponent(q));
+            } 否则 {
+                u += encodeURIComponent(q);
+            }
+            窗户.位置.href = u;
+        }
+    }
+    
+    搜索按钮.addEventListener（事件听众）(“咔哒”, performSearch);
+    搜索输入.addEventListener（事件听众）(“按键”, 功能(e) {
+        如果 (e.说明 === “进来”) performSearch();
+    });
+
+    // ==================== 快捷方式 ====================
+    
+    功能 渲染快捷方式() {
+        快捷方式容器.innerHTML = '';
+        VAR 碎片 = 文件.createDocumentFragment();
+        
+        对于 (VAR i = 0; i < 捷径.长度; i++) {
+            VAR 嘘 = 捷径[i];
+            VAR 项目 = 文件.createElement('a');
+            项目.班级名称 = “快捷物品”;
+            项目.href = 嘘.网址;
+            项目.setAttribute(“rel”, “开封者”);
+            
+            如果 (!快捷颜色[嘘.网址]) {
+                快捷颜色[嘘.网址] = getRandomColor();
+            }
+            VAR 颜色 = 快捷颜色[嘘.网址];
+            
+            项目.innerHTML = 
+                '<div class="shortcut-icon" style="background:' + 颜色.实在在 + ';">' + 
+                    嘘.名称.查拉特(0) + 
+                '' +
+                跨度 级别=“捷径名”>“/跨度> + 嘘. 名称 + '';
+            
+            碎片.附赠子(项目);
+        }
+        
+        快捷方式容器.附赠子(碎片);
+    }
+
+    // ==================== 启动 ====================
+    
+    initData();
+    rebuildEngine下拉菜单();
+    渲染快捷方式();
+    更新时钟();
+    setInterval(更新时钟, 1000);
+})();
