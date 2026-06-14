@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         主页
 // @namespace    http://tampermonkey.net/
-// @version      1.26
+// @version      1.33
 // @description  自定义百度首页
 // @match        https://www.baidu.com/
 // @run-at       document-start
@@ -75,6 +75,7 @@
     var colorDepth = 25;
     var isSettingsOpen = false;
     var formCallback = null;
+    var formReturnTo = null;
 
     function initData() {
         engines = safeGetStorage('customEngines', JSON.parse(JSON.stringify(defaultEngines)));
@@ -321,39 +322,78 @@
         renderShortcutSettings();
     }
 
-    // ==================== 卡片式表单 ====================
+    // ==================== 表单（复用设置面板卡片） ====================
 
-    function showForm(title, placeholderUrl, hint, callback, editName, editUrl) {
+    function showForm(title, placeholderUrl, hint, callback, editName, editUrl, returnTo) {
         formCallback = callback;
-        formOverlay.classList.add('show');
-        formCard.classList.add('show');
-        formTitle.textContent = title;
-        formInputName.value = editName || '';
-        formInputUrl.value = editUrl || '';
-        formInputUrl.placeholder = placeholderUrl;
-        formHint.textContent = hint || '';
+        formReturnTo = returnTo || null;
+        sheetTitle.textContent = title;
+        sheetContent.innerHTML = 
+            '<div class="form-label">名称</div>' +
+            '<input type="text" class="form-input" id="formInputName" placeholder="请输入名称" value="' + (editName || '') + '">' +
+            '<div class="form-label">URL</div>' +
+            '<input type="text" class="form-input" id="formInputUrl" placeholder="' + placeholderUrl + '" value="' + (editUrl || '') + '">' +
+            '<div class="form-hint">' + (hint || '') + '</div>' +
+            '<div class="form-buttons">' +
+                '<button class="form-btn form-btn-cancel" id="formBtnCancel">取消</button>' +
+                '<button class="form-btn form-btn-confirm" id="formBtnConfirm">确认</button>' +
+            '</div>';
+        
+        document.getElementById('formBtnCancel').addEventListener('click', hideForm);
+        document.getElementById('formBtnConfirm').addEventListener('click', submitForm);
+        
+        var inputName = document.getElementById('formInputName');
+        var inputUrl = document.getElementById('formInputUrl');
+        
+        inputName.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') inputUrl.focus();
+        });
+        inputUrl.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') submitForm();
+        });
+        
         if (editName) {
-            formInputUrl.focus();
+            inputUrl.focus();
         } else {
-            formInputName.focus();
+            inputName.focus();
+        }
+        
+        if (!isSettingsOpen) {
+            isSettingsOpen = true;
+            overlay.classList.add('show');
+            bottomSheet.classList.add('show');
         }
     }
 
     function hideForm() {
-        formOverlay.classList.remove('show');
-        formCard.classList.remove('show');
         formCallback = null;
+        if (formReturnTo) {
+            var returnFn = formReturnTo;
+            formReturnTo = null;
+            returnFn();
+        } else {
+            formReturnTo = null;
+            renderMainMenu();
+        }
     }
 
     function submitForm() {
-        var name = formInputName.value.trim();
-        var url = formInputUrl.value.trim();
+        var name = document.getElementById('formInputName').value.trim();
+        var url = document.getElementById('formInputUrl').value.trim();
         if (!name || !url) return;
         if (url.indexOf('://') === -1) url = 'https://' + url;
         if (formCallback) {
             formCallback(name, url);
         }
-        hideForm();
+        formCallback = null;
+        if (formReturnTo) {
+            var returnFn = formReturnTo;
+            formReturnTo = null;
+            returnFn();
+        } else {
+            formReturnTo = null;
+            renderMainMenu();
+        }
     }
 
     // ==================== 设置面板 ====================
@@ -514,10 +554,10 @@
                             }
                             saveShortcuts();
                             renderShortcuts();
-                            renderShortcutSettings();
                         },
                         sh.name,
-                        sh.url
+                        sh.url,
+                        function() { renderShortcutSettings(); }
                     );
                 });
                 
@@ -619,8 +659,7 @@
                     shortcutColors[url] = getRandomColor(colorDepth);
                     saveShortcuts();
                     renderShortcuts();
-                    renderShortcutSettings();
-                });
+                }, null, null, function() { renderShortcutSettings(); });
             });
         }
         sheetContent.appendChild(addBtn);
@@ -675,10 +714,10 @@
                             rebuildSingleDisplayInfo(key);
                             saveEngines();
                             rebuildEngineDropdown();
-                            renderEngineSettings();
                         },
                         eng.name,
-                        eng.url
+                        eng.url,
+                        function() { renderEngineSettings(); }
                     );
                 });
                 
@@ -772,8 +811,7 @@
             showForm('添加搜索引擎', 'https://www.example.com/search?q={query}', '搜索词占位符：{query}', function(name, url) {
                 addCustomEngine(name, url);
                 rebuildEngineDropdown();
-                renderEngineSettings();
-            });
+            }, null, null, function() { renderEngineSettings(); });
         });
         sheetContent.appendChild(addBtn);
         
@@ -791,7 +829,7 @@
     // ==================== HTML模板 ====================
 
     document.open();
-    document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no"><title>主页</title><style>*{margin:0;padding:0;box-sizing:border-box}html,body{width:100%;height:100%;overflow:hidden}body{background:#f0f2f5;display:flex;justify-content:center;align-items:center;flex-direction:column;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;-webkit-user-select:none;user-select:none}.search-container{width:100%;max-width:640px;padding:0 20px;display:flex;flex-direction:column;align-items:center;gap:16px}.corner-strip{position:fixed;z-index:100;background:#fff;box-shadow:0 4px 16px rgba(0,0,0,0.1);user-select:none;-webkit-tap-highlight-color:transparent}.clock-wrapper{left:0;top:60px;border-radius:0 12px 12px 0;padding:16px 20px 16px 14px;margin-left:-120px;display:flex;flex-direction:column;text-align:left;animation:slideInLeft 0.6s ease-out 0.3s forwards;transition:margin-left 0.3s ease,box-shadow 0.3s ease,padding-left 0.3s ease}.clock-wrapper.show{margin-left:0!important;box-shadow:2px 6px 24px rgba(0,0,0,0.18);padding-left:20px}@keyframes slideInLeft{from{margin-left:-120px}to{margin-left:-8px}}.clock-time{font-size:28px;font-weight:700;color:#333;letter-spacing:1px;line-height:1;margin-bottom:6px}.clock-date{font-size:12px;color:#999;letter-spacing:0.5px;line-height:1.5}.settings-wrapper{right:0;top:16px;border-radius:12px 0 0 12px;padding:12px 35px;margin-right:-98px;cursor:pointer;transition:margin-right 0.3s ease,box-shadow 0.3s ease}.settings-wrapper.show{margin-right:0!important;box-shadow:-2px 6px 24px rgba(0,0,0,0.18)}.settings-icon{width:28px;height:28px;display:flex;align-items:center;justify-content:center;color:#666;font-size:20px;border-radius:6px}.card{background:#fff;border-radius:16px;box-shadow:0 2px 12px rgba(0,0,0,0.08),0 8px 32px rgba(0,0,0,0.06);padding:28px 24px;width:100%;transition:all 0.3s ease;display:flex;flex-direction:column;align-items:center}.card:hover{box-shadow:0 4px 16px rgba(0,0,0,0.1),0 12px 40px rgba(0,0,0,0.08)}.shortcuts-card{background:#fff;border-radius:16px;box-shadow:0 2px 12px rgba(0,0,0,0.08),0 8px 32px rgba(0,0,0,0.06);padding:20px 24px;width:100%;transition:all 0.3s ease}.shortcuts-card:hover{box-shadow:0 4px 16px rgba(0,0,0,0.1),0 12px 40px rgba(0,0,0,0.08)}.shortcuts-card.hidden{display:none}.engine-logo{font-size:52px;font-weight:900;margin-bottom:50px;user-select:none;letter-spacing:3px;color:#fff;text-shadow:0 1px 0 #ccc,0 2px 0 #c9c9c9,0 3px 0 #bbb,0 4px 0 #b9b9b9,0 5px 0 #aaa,0 6px 1px rgba(0,0,0,.1),0 0 5px rgba(0,0,0,.1),0 1px 3px rgba(0,0,0,.3),0 3px 5px rgba(0,0,0,.2),0 5px 10px rgba(0,0,0,.25),0 10px 10px rgba(0,0,0,.2),0 20px 20px rgba(0,0,0,.15)}.search-box{display:flex;align-items:center;border:2px solid #e8eaed;border-radius:24px;padding:8px 8px 8px 12px;transition:all 0.3s ease;background:#fff;gap:8px;width:100%}.search-box:focus-within{border-color:#4e6ef2;box-shadow:0 2px 8px rgba(78,110,242,0.15)}.engine-selector{display:flex;align-items:center;cursor:pointer;position:relative;user-select:none;flex-shrink:0;min-width:0}.current-engine{display:flex;align-items:center;gap:6px;font-size:14px;color:#333;white-space:nowrap;overflow:hidden}.engine-icon{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:bold;color:#fff;flex-shrink:0}.engine-name{max-width:60px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dropdown-arrow{font-size:10px;color:#999;transition:transform 0.3s ease;flex-shrink:0}.dropdown-arrow.open{transform:rotate(180deg)}.engine-dropdown{position:absolute;top:calc(100% + 8px);left:0;background:#fff;border:1px solid #e0e0e0;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);min-width:120px;display:none;z-index:1000}.engine-dropdown.show{display:block}.engine-option{display:flex;align-items:center;gap:8px;padding:10px 12px;cursor:pointer;transition:background 0.2s ease;font-size:14px;color:#333}.engine-option:first-child{border-radius:8px 8px 0 0}.engine-option:last-child{border-radius:0 0 8px 8px}.engine-option:hover{background:#f5f5f5}.engine-option.active{background:#f0f3ff;color:#4e6ef2}.search-input{flex:1;min-width:0;border:none;outline:none;font-size:16px;padding:8px 4px;color:#333;-webkit-user-select:text;user-select:text}.search-input::placeholder{color:#999}.search-button{border:none;color:#fff;width:36px;height:36px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.3s ease;flex-shrink:0}.search-button:hover{filter:brightness(0.9);transform:scale(1.05)}.search-button svg{width:18px;height:18px}.shortcuts{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.shortcut-item{display:flex;flex-direction:column;align-items:center;gap:8px;cursor:pointer;padding:12px 8px;border-radius:12px;transition:all 0.2s ease;text-decoration:none;color:#333;touch-action:manipulation}.shortcut-item:hover{background:#f5f7fa;transform:translateY(-3px)}.shortcut-icon{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:bold;color:#fff;box-shadow:0 3px 0 rgba(0,0,0,0.3),0 6px 12px rgba(0,0,0,0.2),0 10px 20px rgba(0,0,0,0.1),inset 0 2px 4px rgba(255,255,255,0.3),inset 0 -2px 4px rgba(0,0,0,0.1);transition:all 0.2s ease}.shortcut-item:hover .shortcut-icon{box-shadow:0 5px 0 rgba(0,0,0,0.35),0 10px 20px rgba(0,0,0,0.25),0 15px 30px rgba(0,0,0,0.15),inset 0 3px 6px rgba(255,255,255,0.35),inset 0 -3px 6px rgba(0,0,0,0.15);transform:translateY(-2px)}.shortcut-icon-add{background:#e8eaed!important;color:#999;font-size:28px;font-weight:400;box-shadow:none!important}.shortcut-item:hover .shortcut-icon-add{background:#d0d4da!important;box-shadow:none!important;transform:translateY(-2px)}.shortcut-name{font-size:12px;color:#666;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center}.overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.4);z-index:200;opacity:0;pointer-events:none;transition:opacity 0.3s ease}.overlay.show{opacity:1;pointer-events:auto}.bottom-sheet{position:fixed;bottom:0;left:0;width:100%;background:#fff;border-radius:20px 20px 0 0;z-index:201;transform:translateY(100%);transition:transform 0.35s ease-out;max-height:55vh;overflow-y:auto;padding:8px 0 24px;-webkit-overflow-scrolling:touch}.bottom-sheet.show{transform:translateY(0)}.sheet-handle{width:36px;height:5px;background:#ddd;border-radius:3px;margin:8px auto 16px}.sheet-title{font-size:16px;font-weight:600;color:#333;text-align:center;margin-bottom:16px}.sheet-menu-item{display:flex;align-items:center;gap:12px;padding:14px 24px;cursor:pointer;transition:background 0.2s ease;font-size:15px;color:#333}.sheet-menu-item:active{background:#f5f5f5}.sheet-menu-icon{width:24px;height:24px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}.sheet-divider{height:1px;background:#f0f0f0;margin:4px 0}.engine-setting-row{display:flex;align-items:center;padding:10px 16px;gap:10px}.engine-setting-order{display:flex;flex-direction:column;gap:2px;flex-shrink:0;width:28px}.engine-order-btn{width:28px;height:18px;border:none;background:#f0f0f0;color:#666;font-size:9px;cursor:pointer;border-radius:4px;display:flex;align-items:center;justify-content:center}.engine-order-btn:active{background:#ddd}.engine-order-btn:disabled{opacity:0.25}.engine-setting-info{display:flex;align-items:center;gap:10px;flex:1;min-width:0}.engine-setting-icon{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:bold;color:#fff;flex-shrink:0}.engine-setting-name{font-size:14px;color:#333}.engine-setting-toggle{width:44px;height:26px;border-radius:13px;background:#ddd;cursor:pointer;transition:background 0.3s ease;position:relative;flex-shrink:0}.engine-setting-toggle.active{background:#4e6ef2}.engine-setting-toggle::after{content:"";position:absolute;top:2px;left:2px;width:22px;height:22px;border-radius:50%;background:#fff;transition:left 0.3s ease;box-shadow:0 1px 3px rgba(0,0,0,0.2)}.engine-setting-toggle.active::after{left:20px}.engine-setting-delete{flex-shrink:0;width:28px;display:flex;align-items:center;justify-content:center}.engine-delete-btn{width:26px;height:26px;border-radius:50%;border:none;background:#fee;color:#e55;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center}.engine-delete-btn:active{background:#fcc}.depth-slider{flex:1;height:6px;border-radius:3px;background:#e8eaed;outline:none;-webkit-appearance:none;appearance:none;cursor:pointer}.depth-slider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:24px;height:24px;border-radius:50%;background:#4e6ef2;cursor:pointer;box-shadow:0 2px 6px rgba(78,110,242,0.3)}.depth-slider::-moz-range-thumb{width:24px;height:24px;border-radius:50%;background:#4e6ef2;cursor:pointer;border:none;box-shadow:0 2px 6px rgba(78,110,242,0.3)}.random-color-btn{width:36px;height:36px;border-radius:50%;border:none;background:#f0f0f0;cursor:pointer;font-size:16px;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:background 0.2s ease}.random-color-btn:hover{background:#e0e0e0}.form-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:300;opacity:0;pointer-events:none;transition:opacity 0.3s ease}.form-overlay.show{opacity:1;pointer-events:auto}.form-card{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(0.9);z-index:301;background:#fff;border-radius:16px;padding:24px;width:90%;max-width:400px;box-shadow:0 8px 40px rgba(0,0,0,0.2);opacity:0;pointer-events:none;transition:all 0.3s ease}.form-card.show{opacity:1;pointer-events:auto;transform:translate(-50%,-50%) scale(1)}.form-card-title{font-size:18px;font-weight:600;color:#333;margin-bottom:20px;text-align:center}.form-label{font-size:13px;color:#999;margin-bottom:6px}.form-input{width:100%;height:44px;border:2px solid #e8eaed;border-radius:10px;padding:0 14px;font-size:15px;color:#333;outline:none;transition:border-color 0.2s ease;margin-bottom:16px}.form-input:focus{border-color:#4e6ef2}.form-hint{font-size:12px;color:#999;margin-top:-10px;margin-bottom:16px;text-align:center}.form-buttons{display:flex;gap:12px}.form-btn{flex:1;height:44px;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;transition:all 0.2s ease}.form-btn-cancel{background:#f0f0f0;color:#666}.form-btn-cancel:hover{background:#e0e0e0}.form-btn-confirm{background:#4e6ef2;color:#fff}.form-btn-confirm:hover{background:#3d5bd9}@media(max-width:480px){.engine-logo{font-size:40px;margin-bottom:32px}.shortcuts{grid-template-columns:repeat(4,1fr);gap:4px}.shortcut-item{padding:8px 4px}.engine-name{max-width:48px}.form-card{padding:20px;width:94%}}</style></head><body><div class="corner-strip clock-wrapper" id="clockWrapper"><div class="clock-time" id="clockTime"></div><div class="clock-date" id="clockDate"></div></div><div class="corner-strip settings-wrapper" id="settingsWrapper"><div class="settings-icon" title="设置" id="btnSettings">⚙️</div></div><div class="overlay" id="overlay"></div><div class="bottom-sheet" id="bottomSheet"><div class="sheet-handle"></div><div class="sheet-title" id="sheetTitle">设置</div><div id="sheetContent"></div></div><div class="form-overlay" id="formOverlay"></div><div class="form-card" id="formCard"><div class="form-card-title" id="formTitle"></div><div class="form-label">名称</div><input type="text" class="form-input" id="formInputName" placeholder="请输入名称"><div class="form-label">URL</div><input type="text" class="form-input" id="formInputUrl" placeholder=""><div class="form-hint" id="formHint"></div><div class="form-buttons"><button class="form-btn form-btn-cancel" id="formBtnCancel">取消</button><button class="form-btn form-btn-confirm" id="formBtnConfirm">确认</button></div></div><div class="search-container"><div class="card"><div class="engine-logo" id="engineLogo"></div><div class="search-box"><div class="engine-selector" id="engineSelector"><div class="current-engine"><span class="engine-icon" id="currentEngineIcon"></span><span class="engine-name" id="currentEngineName"></span></div><span class="dropdown-arrow" id="dropdownArrow">▼</span><div class="engine-dropdown" id="engineDropdown"></div></div><input type="text" class="search-input" id="searchInput" placeholder="输入搜索内容..."><button class="search-button" id="searchButton"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.35-4.35"></path></svg></button></div></div><div class="shortcuts-card" id="shortcutsCard"><div class="shortcuts" id="shortcutsContainer"></div></div></div></body></html>');
+    document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no"><title>主页</title><style>*{margin:0;padding:0;box-sizing:border-box}html,body{width:100%;height:100%;overflow:hidden}body{background:#f0f2f5;display:flex;justify-content:center;align-items:center;flex-direction:column;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;-webkit-user-select:none;user-select:none}.search-container{width:100%;max-width:640px;padding:0 20px;display:flex;flex-direction:column;align-items:center;gap:16px}.corner-strip{position:fixed;z-index:100;background:#fff;box-shadow:0 4px 16px rgba(0,0,0,0.1);user-select:none;-webkit-tap-highlight-color:transparent}.clock-wrapper{left:0;top:60px;border-radius:0 12px 12px 0;padding:16px 20px 16px 14px;margin-left:-120px;display:flex;flex-direction:column;text-align:left;animation:slideInLeft 0.6s ease-out 0.3s forwards;transition:margin-left 0.3s ease,box-shadow 0.3s ease,padding-left 0.3s ease}.clock-wrapper.show{margin-left:0!important;box-shadow:2px 6px 24px rgba(0,0,0,0.18);padding-left:20px}@keyframes slideInLeft{from{margin-left:-120px}to{margin-left:-8px}}.clock-time{font-size:28px;font-weight:700;color:#333;letter-spacing:1px;line-height:1;margin-bottom:6px}.clock-date{font-size:12px;color:#999;letter-spacing:0.5px;line-height:1.5}.settings-wrapper{right:0;top:16px;border-radius:12px 0 0 12px;padding:12px 35px;margin-right:-98px;cursor:pointer;transition:margin-right 0.3s ease,box-shadow 0.3s ease}.settings-wrapper.show{margin-right:0!important;box-shadow:-2px 6px 24px rgba(0,0,0,0.18)}.settings-icon{width:28px;height:28px;display:flex;align-items:center;justify-content:center;color:#666;font-size:20px;border-radius:6px}.card{background:#fff;border-radius:16px;box-shadow:0 2px 12px rgba(0,0,0,0.08),0 8px 32px rgba(0,0,0,0.06);padding:28px 24px;width:100%;transition:all 0.3s ease;display:flex;flex-direction:column;align-items:center}.card:hover{box-shadow:0 4px 16px rgba(0,0,0,0.1),0 12px 40px rgba(0,0,0,0.08)}.shortcuts-card{background:#fff;border-radius:16px;box-shadow:0 2px 12px rgba(0,0,0,0.08),0 8px 32px rgba(0,0,0,0.06);padding:20px 24px;width:100%;transition:all 0.3s ease}.shortcuts-card:hover{box-shadow:0 4px 16px rgba(0,0,0,0.1),0 12px 40px rgba(0,0,0,0.08)}.shortcuts-card.hidden{display:none}.engine-logo{font-size:52px;font-weight:900;margin-bottom:50px;user-select:none;letter-spacing:3px;color:#fff;text-shadow:0 1px 0 #ccc,0 2px 0 #c9c9c9,0 3px 0 #bbb,0 4px 0 #b9b9b9,0 5px 0 #aaa,0 6px 1px rgba(0,0,0,.1),0 0 5px rgba(0,0,0,.1),0 1px 3px rgba(0,0,0,.3),0 3px 5px rgba(0,0,0,.2),0 5px 10px rgba(0,0,0,.25),0 10px 10px rgba(0,0,0,.2),0 20px 20px rgba(0,0,0,.15)}.search-box{display:flex;align-items:center;border:2px solid #e8eaed;border-radius:24px;padding:8px 8px 8px 12px;transition:all 0.3s ease;background:#fff;gap:8px;width:100%}.search-box:focus-within{border-color:#4e6ef2;box-shadow:0 2px 8px rgba(78,110,242,0.15)}.engine-selector{display:flex;align-items:center;cursor:pointer;position:relative;user-select:none;flex-shrink:0;min-width:0}.current-engine{display:flex;align-items:center;gap:6px;font-size:14px;color:#333;white-space:nowrap;overflow:hidden}.engine-icon{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:bold;color:#fff;flex-shrink:0}.engine-name{max-width:60px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dropdown-arrow{font-size:10px;color:#999;transition:transform 0.3s ease;flex-shrink:0}.dropdown-arrow.open{transform:rotate(180deg)}.engine-dropdown{position:absolute;top:calc(100% + 8px);left:0;background:#fff;border:1px solid #e0e0e0;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);min-width:120px;display:none;z-index:1000}.engine-dropdown.show{display:block}.engine-option{display:flex;align-items:center;gap:8px;padding:10px 12px;cursor:pointer;transition:background 0.2s ease;font-size:14px;color:#333}.engine-option:first-child{border-radius:8px 8px 0 0}.engine-option:last-child{border-radius:0 0 8px 8px}.engine-option:hover{background:#f5f5f5}.engine-option.active{background:#f0f3ff;color:#4e6ef2}.search-input{flex:1;min-width:0;border:none;outline:none;font-size:16px;padding:8px 4px;color:#333;-webkit-user-select:text;user-select:text}.search-input::placeholder{color:#999}.search-button{border:none;color:#fff;width:36px;height:36px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.3s ease;flex-shrink:0}.search-button:hover{filter:brightness(0.9);transform:scale(1.05)}.search-button svg{width:18px;height:18px}.shortcuts{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.shortcut-item{display:flex;flex-direction:column;align-items:center;gap:8px;cursor:pointer;padding:12px 8px;border-radius:12px;transition:all 0.2s ease;text-decoration:none;color:#333;touch-action:manipulation}.shortcut-item:hover{background:#f5f7fa;transform:translateY(-3px)}.shortcut-icon{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:bold;color:#fff;box-shadow:0 3px 0 rgba(0,0,0,0.3),0 6px 12px rgba(0,0,0,0.2),0 10px 20px rgba(0,0,0,0.1),inset 0 2px 4px rgba(255,255,255,0.3),inset 0 -2px 4px rgba(0,0,0,0.1);transition:all 0.2s ease}.shortcut-item:hover .shortcut-icon{box-shadow:0 5px 0 rgba(0,0,0,0.35),0 10px 20px rgba(0,0,0,0.25),0 15px 30px rgba(0,0,0,0.15),inset 0 3px 6px rgba(255,255,255,0.35),inset 0 -3px 6px rgba(0,0,0,0.15);transform:translateY(-2px)}.shortcut-icon-add{background:#e8eaed!important;color:#999;font-size:28px;font-weight:400;box-shadow:none!important}.shortcut-item:hover .shortcut-icon-add{background:#d0d4da!important;box-shadow:none!important;transform:translateY(-2px)}.shortcut-name{font-size:12px;color:#666;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center}.overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.4);z-index:200;opacity:0;pointer-events:none;transition:opacity 0.3s ease}.overlay.show{opacity:1;pointer-events:auto}.bottom-sheet{position:fixed;bottom:0;left:0;width:100%;background:#fff;border-radius:20px 20px 0 0;z-index:201;transform:translateY(100%);transition:transform 0.35s ease-out;max-height:55vh;overflow-y:auto;padding:8px 0 24px;-webkit-overflow-scrolling:touch}.bottom-sheet.show{transform:translateY(0)}.sheet-handle{width:36px;height:5px;background:#ddd;border-radius:3px;margin:8px auto 16px}.sheet-title{font-size:16px;font-weight:600;color:#333;text-align:center;margin-bottom:16px}.sheet-menu-item{display:flex;align-items:center;gap:12px;padding:14px 24px;cursor:pointer;transition:background 0.2s ease;font-size:15px;color:#333}.sheet-menu-item:active{background:#f5f5f5}.sheet-menu-icon{width:24px;height:24px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}.sheet-divider{height:1px;background:#f0f0f0;margin:4px 0}.engine-setting-row{display:flex;align-items:center;padding:10px 16px;gap:10px}.engine-setting-order{display:flex;flex-direction:column;gap:2px;flex-shrink:0;width:28px}.engine-order-btn{width:28px;height:18px;border:none;background:#f0f0f0;color:#666;font-size:9px;cursor:pointer;border-radius:4px;display:flex;align-items:center;justify-content:center}.engine-order-btn:active{background:#ddd}.engine-order-btn:disabled{opacity:0.25}.engine-setting-info{display:flex;align-items:center;gap:10px;flex:1;min-width:0}.engine-setting-icon{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:bold;color:#fff;flex-shrink:0}.engine-setting-name{font-size:14px;color:#333}.engine-setting-toggle{width:44px;height:26px;border-radius:13px;background:#ddd;cursor:pointer;transition:background 0.3s ease;position:relative;flex-shrink:0}.engine-setting-toggle.active{background:#4e6ef2}.engine-setting-toggle::after{content:"";position:absolute;top:2px;left:2px;width:22px;height:22px;border-radius:50%;background:#fff;transition:left 0.3s ease;box-shadow:0 1px 3px rgba(0,0,0,0.2)}.engine-setting-toggle.active::after{left:20px}.engine-setting-delete{flex-shrink:0;width:28px;display:flex;align-items:center;justify-content:center}.engine-delete-btn{width:26px;height:26px;border-radius:50%;border:none;background:#fee;color:#e55;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center}.engine-delete-btn:active{background:#fcc}.depth-slider{flex:1;height:6px;border-radius:3px;background:#e8eaed;outline:none;-webkit-appearance:none;appearance:none;cursor:pointer}.depth-slider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:24px;height:24px;border-radius:50%;background:#4e6ef2;cursor:pointer;box-shadow:0 2px 6px rgba(78,110,242,0.3)}.depth-slider::-moz-range-thumb{width:24px;height:24px;border-radius:50%;background:#4e6ef2;cursor:pointer;border:none;box-shadow:0 2px 6px rgba(78,110,242,0.3)}.random-color-btn{width:36px;height:36px;border-radius:50%;border:none;background:#f0f0f0;cursor:pointer;font-size:16px;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:background 0.2s ease}.random-color-btn:hover{background:#e0e0e0}.form-label{font-size:13px;color:#999;margin:0 24px 6px}.form-input{display:block;width:calc(100% - 48px);height:44px;border:2px solid #e8eaed;border-radius:10px;padding:0 14px;font-size:15px;color:#333;outline:none;transition:border-color 0.2s ease;margin:0 24px 16px}.form-input:focus{border-color:#4e6ef2}.form-hint{font-size:12px;color:#999;margin:0 24px 16px;text-align:center}.form-buttons{display:flex;gap:12px;margin:0 24px}.form-btn{flex:1;height:44px;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;transition:all 0.2s ease}.form-btn-cancel{background:#f0f0f0;color:#666}.form-btn-cancel:hover{background:#e0e0e0}.form-btn-confirm{background:#4e6ef2;color:#fff}.form-btn-confirm:hover{background:#3d5bd9}@media(max-width:480px){.engine-logo{font-size:40px;margin-bottom:32px}.shortcuts{grid-template-columns:repeat(4,1fr);gap:4px}.shortcut-item{padding:8px 4px}.engine-name{max-width:48px}}</style></head><body><div class="corner-strip clock-wrapper" id="clockWrapper"><div class="clock-time" id="clockTime"></div><div class="clock-date" id="clockDate"></div></div><div class="corner-strip settings-wrapper" id="settingsWrapper"><div class="settings-icon" title="设置" id="btnSettings">⚙️</div></div><div class="overlay" id="overlay"></div><div class="bottom-sheet" id="bottomSheet"><div class="sheet-handle"></div><div class="sheet-title" id="sheetTitle">设置</div><div id="sheetContent"></div></div><div class="search-container"><div class="card"><div class="engine-logo" id="engineLogo"></div><div class="search-box"><div class="engine-selector" id="engineSelector"><div class="current-engine"><span class="engine-icon" id="currentEngineIcon"></span><span class="engine-name" id="currentEngineName"></span></div><span class="dropdown-arrow" id="dropdownArrow">▼</span><div class="engine-dropdown" id="engineDropdown"></div></div><input type="text" class="search-input" id="searchInput" placeholder="输入搜索内容..."><button class="search-button" id="searchButton"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.35-4.35"></path></svg></button></div></div><div class="shortcuts-card" id="shortcutsCard"><div class="shortcuts" id="shortcutsContainer"></div></div></div></body></html>');
     document.close();
 
     // ==================== 全局事件 ====================
@@ -824,34 +862,7 @@
         settingsWrapper = document.getElementById('settingsWrapper'),
         clockWrapper = document.getElementById('clockWrapper'),
         shortcutsCard = document.getElementById('shortcutsCard'),
-        shortcutsContainer = document.getElementById('shortcutsContainer'),
-        formOverlay = document.getElementById('formOverlay'),
-        formCard = document.getElementById('formCard'),
-        formTitle = document.getElementById('formTitle'),
-        formInputName = document.getElementById('formInputName'),
-        formInputUrl = document.getElementById('formInputUrl'),
-        formHint = document.getElementById('formHint');
-
-    // ==================== 表单事件 ====================
-
-    document.getElementById('formBtnCancel').addEventListener('click', hideForm);
-    formOverlay.addEventListener('click', hideForm);
-    
-    document.getElementById('formBtnConfirm').addEventListener('click', submitForm);
-    
-    formInputName.addEventListener('keypress', function(e) {
-        if (e.key === 'Enter') formInputUrl.focus();
-    });
-    
-    formInputUrl.addEventListener('keypress', function(e) {
-        if (e.key === 'Enter') submitForm();
-    });
-
-    document.addEventListener('keydown', function(e) {
-        if (e.key === 'Escape' && formOverlay.classList.contains('show')) {
-            hideForm();
-        }
-    });
+        shortcutsContainer = document.getElementById('shortcutsContainer');
 
     // ==================== 界面控制 ====================
     
@@ -866,13 +877,18 @@
         isSettingsOpen = false;
         overlay.classList.remove('show');
         bottomSheet.classList.remove('show');
+        formCallback = null;
     }
     
     overlay.addEventListener('click', closeBS);
     
     document.addEventListener('keydown', function(e) {
-        if (e.key === 'Escape' && isSettingsOpen && !formOverlay.classList.contains('show')) {
-            closeBS();
+        if (e.key === 'Escape' && isSettingsOpen) {
+            if (formCallback) {
+                hideForm();
+            } else {
+                closeBS();
+            }
         }
     });
 
@@ -1032,7 +1048,7 @@
                     shortcutColors[url] = getRandomColor(colorDepth);
                     saveShortcuts();
                     renderShortcuts();
-                });
+                }, null, null, function() { closeBS(); });
             });
             addItem.innerHTML = 
                 '<div class="shortcut-icon shortcut-icon-add">+</div>' +
