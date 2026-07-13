@@ -1186,6 +1186,50 @@
             });
         },
 
+        // 按 URL 查找书签节点（返回 { node, parentArray, index } 或 null）
+        findBookmarkByUrl(tree, url) {
+            for (let i = 0; i < tree.length; i++) {
+                const node = tree[i];
+                if (node.type === 'bookmark' && node.url === url) {
+                    return { node, parentArray: tree, index: i };
+                }
+                if (node.children && node.children.length > 0) {
+                    const result = this.findBookmarkByUrl(node.children, url);
+                    if (result) return result;
+                }
+            }
+            return null;
+        },
+
+        // 添加书签到根目录
+        addBookmarkToRoot(title, url, color) {
+            const cfg = Config.load();
+            const root = cfg.bookmarkRoot;
+            if (!root.children) root.children = [];
+            const newBookmark = {
+                id: Utils.generateId(),
+                title,
+                type: 'bookmark',
+                url: Utils.ensureUrl(url),
+                color: color || Utils.randomColor()
+            };
+            root.children.push(newBookmark);
+            root.expanded = true;
+            this.sortChildren(root.children);
+            Config.save(cfg);
+            return newBookmark;
+        },
+
+        // 按 URL 删除书签（返回被删除的节点，找不到返回 null）
+        deleteBookmarkByUrl(url) {
+            const cfg = Config.load();
+            const found = this.findBookmarkByUrl(cfg.bookmarkRoot.children, url);
+            if (!found) return null;
+            found.parentArray.splice(found.index, 1);
+            Config.save(cfg);
+            return found.node;
+        },
+
         // 递归构建书签树 HTML
         buildTreeNode(node, depth) {
             const isFolder = node.type === 'folder';
@@ -2563,6 +2607,32 @@
                 c.homepage = c.homepage === u ? '' : u;
                 Config.save(c);
                 setTimeout(() => location.reload(), 300);
+            }
+        );
+
+        const currentUrl = Utils.getCurrentUrl();
+        const cfg = Config.load();
+        const isInBookmarks = Bookmarks.findBookmarkByUrl(
+            cfg.bookmarkRoot.children || [],
+            currentUrl
+        ) !== null;
+
+        GM_registerMenuCommand(
+            isInBookmarks ? '🔖 删除书签' : '📑 添加书签',
+            () => {
+                const url = Utils.getCurrentUrl();
+                const title = document.title || url;
+                const config = Config.load();
+                const exists = Bookmarks.findBookmarkByUrl(
+                    config.bookmarkRoot.children || [],
+                    url
+                );
+
+                if (exists) {
+                    Bookmarks.deleteBookmarkByUrl(url);
+                } else {
+                    Bookmarks.addBookmarkToRoot(title, url);
+                }
             }
         );
     }
