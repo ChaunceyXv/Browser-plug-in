@@ -1527,7 +1527,7 @@
                         border-radius: 50%;
                         -webkit-tap-highlight-color: transparent;
                         font-size: 20px;
-                        color: #999;
+                        color: var(--bm-color, #999);
                         flex-shrink: 0;
                     }
                     .bookmarks-close:active {
@@ -2532,7 +2532,7 @@
                         border-radius: 50%;
                         -webkit-tap-highlight-color: transparent;
                         font-size: 20px;
-                        color: #999;
+                        color: var(--engine-color, #999);
                     }
                     .settings-close:active {
                         background: #f0f0f0;
