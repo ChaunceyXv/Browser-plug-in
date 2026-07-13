@@ -38,9 +38,20 @@
  *   结构: { homepage, shortcutsVisible, searchEngines, defaultEngine, bookmarkRoot, shortcuts }
  *   - 新增配置项直接在 Config.defaults 中添加字段
  *   - 模块禁止直接调用 Storage，必须通过 Config 读写
+ *   - Config.load() 必须对所有配置项做类型校验和兜底
  *
  * 【全局颜色池】
  *   12 个预设颜色，用于搜索引擎图标、快捷方式图标、书签图标等
+ *
+ * 【事件总线 EventBus】
+ *   - EventBus.on() 返回取消函数，模块须收集所有监听器的取消函数
+ *   - 模块 init() 时先清理旧监听器再重新绑定，防止重复注册
+ *   - AbortController 仅用于 DOM 事件，不负责 EventBus 监听器清理
+ *
+ * 【模块初始化规范】
+ *   - 每个模块 init() 时：先 abort 旧 controller → 清理 EventBus 监听器 → 创建新 controller → 渲染 HTML → 绑定事件
+ *   - renderHomepage() 中模块初始化使用 try-catch 隔离，单个模块失败不影响其他
+ *   - DOM 就绪检查：document.readyState 为 loading 时等 DOMContentLoaded
  *
  * 【开发约束（AI 必须遵守）】
  *   - 全局行为放 renderHomepage()，模块行为放各自模块内
@@ -70,6 +81,7 @@
         return {
             on(event, callback) {
                 (events[event] = events[event] || []).push(callback);
+                return () => this.off(event, callback);
             },
             off(event, callback) {
                 if (events[event]) events[event] = events[event].filter(cb => cb !== callback);
@@ -134,12 +146,20 @@
                 const merged = JSON.parse(JSON.stringify(defaults));
                 const stored = Storage.get(KEY, {});
                 Object.assign(merged, stored);
-                
+
+                if (typeof merged.homepage !== 'string') merged.homepage = defaults.homepage;
+                if (typeof merged.shortcutsVisible !== 'boolean') merged.shortcutsVisible = defaults.shortcutsVisible;
                 if (!Array.isArray(merged.searchEngines) || merged.searchEngines.length === 0) {
                     merged.searchEngines = JSON.parse(JSON.stringify(defaults.searchEngines));
                 }
                 if (!merged.searchEngines.some(e => e.name === merged.defaultEngine)) {
                     merged.defaultEngine = merged.searchEngines[0].name;
+                }
+                if (!merged.bookmarkRoot || typeof merged.bookmarkRoot !== 'object') {
+                    merged.bookmarkRoot = JSON.parse(JSON.stringify(defaults.bookmarkRoot));
+                }
+                if (!Array.isArray(merged.shortcuts)) {
+                    merged.shortcuts = JSON.parse(JSON.stringify(defaults.shortcuts));
                 }
                 cache = merged;
                 return merged;
@@ -408,6 +428,7 @@
         currentEngine: null, engines: [], dropdownVisible: false, longPressTimer: null, longPressTriggered: false,
         preventClick: false,
         abortController: null,
+        eventBusUnsub: [],
         render() {
             const c = Config.load();
             this.engines = c.searchEngines;
@@ -463,6 +484,8 @@
             if (container) {
                 if (this.abortController) this.abortController.abort();
                 this.abortController = new AbortController();
+                this.eventBusUnsub.forEach(fn => { try { fn(); } catch(e) {} });
+                this.eventBusUnsub = [];
                 container.innerHTML = this.render();
                 this.applyEngineColors();
                 this.bindEvents();
@@ -478,7 +501,7 @@
             }
             EventBus.emit('engine:color-changed', color);
         },
-        getCurrentColor() { return this.currentEngine ? this.currentEngine.color : '#008373'; },
+        getCurrentColor() { return this.currentEngine ? this.currentEngine.color : ColorPool[0]; },
         refreshDropdown() {
             const engines = Config.get('searchEngines');
             this.engines = engines;
@@ -577,16 +600,15 @@
                 }
             }, { signal });
 
-            EventBus.on('config:updated', ({ path }) => {
+            this.eventBusUnsub.push(EventBus.on('config:updated', ({ path }) => {
                 if (path === 'searchEngines' || path === 'defaultEngine') this.refreshDropdown();
-            });
+            }));
         }
     };
 
     const Shortcuts = (() => {
         const COLS = 4, ROWS = 3;
         let editing = false;
-        let eventsBound = false;
         let dragStartIndex = -1;
         let touchDragElement = null;
         let touchStartX = 0, touchStartY = 0;
@@ -594,6 +616,8 @@
         let rafPending = false;
         let isDragging = false;
         let abortController = null;
+
+        let eventBusUnsub = [];
 
         function getMaxSlots() { return COLS * ROWS; }
 
@@ -642,13 +666,12 @@
             if (container) {
                 if (abortController) abortController.abort();
                 abortController = new AbortController();
+                eventBusUnsub.forEach(fn => { try { fn(); } catch(e) {} });
+                eventBusUnsub = [];
                 const wasEditing = editing;
                 container.innerHTML = render();
                 if (wasEditing) editing = true;
-                if (!eventsBound) {
-                    bindEvents();
-                    eventsBound = true;
-                }
+                bindEvents();
             }
         }
 
@@ -817,11 +840,11 @@
                 dragStartIndex = -1;
                 isDragging = false;
             }, { signal });
-        }
 
-        EventBus.on('config:updated', ({ path }) => {
-            if (path === 'shortcuts' || path === 'shortcutsVisible') init();
-        });
+            eventBusUnsub.push(EventBus.on('config:updated', ({ path }) => {
+                if (path === 'shortcuts' || path === 'shortcutsVisible') init();
+            }));
+        }
 
         return { init, getMaxSlots, show() { document.getElementById('shortcuts-area').style.display = 'grid'; }, hide() { document.getElementById('shortcuts-area').style.display = 'none'; } };
     })();
@@ -829,6 +852,7 @@
     const Bookmarks = (() => {
         let visible = false;
         let abortController = null;
+        let eventBusUnsub = [];
 
         function sortChildrenCopy(nodes) {
             if (!nodes) return [];
@@ -924,6 +948,8 @@
         function init() {
             if (abortController) abortController.abort();
             abortController = new AbortController();
+            eventBusUnsub.forEach(fn => { try { fn(); } catch(e) {} });
+            eventBusUnsub = [];
             const container = document.getElementById('bookmarks-overlay');
             if (container) container.innerHTML = render();
             applyColor();
@@ -1120,14 +1146,13 @@
                 }
             }, { signal });
 
-            EventBus.on('engine:color-changed', applyColor);
-            EventBus.on('config:updated', ({ path }) => {
+            eventBusUnsub.push(EventBus.on('engine:color-changed', applyColor));
+            eventBusUnsub.push(EventBus.on('config:updated', ({ path }) => {
                 if (path === 'bookmarkRoot') refreshPanel();
-            });
-
-            EventBus.on('panel:show', (panelName) => {
+            }));
+            eventBusUnsub.push(EventBus.on('panel:show', (panelName) => {
                 if (panelName !== 'bookmarks') hide();
-            });
+            }));
         }
 
         return { init, show, hide, bindEvents };
@@ -1138,6 +1163,7 @@
         let selectedColor = ColorPool[0];
         let editingIndex = -1;
         let abortController = null;
+        let eventBusUnsub = [];
 
         function render() {
             const cfg = Config.load();
@@ -1229,6 +1255,8 @@
         function init() {
             if (abortController) abortController.abort();
             abortController = new AbortController();
+            eventBusUnsub.forEach(fn => { try { fn(); } catch(e) {} });
+            eventBusUnsub = [];
             const container = document.getElementById('settings-overlay');
             if (container) container.innerHTML = render();
             applyColor();
@@ -1428,11 +1456,10 @@
                 }, { signal });
             }
 
-            EventBus.on('panel:show', (panelName) => {
+            eventBusUnsub.push(EventBus.on('panel:show', (panelName) => {
                 if (panelName !== 'settings') hide();
-            });
-
-            EventBus.on('engine:color-changed', applyColor);
+            }));
+            eventBusUnsub.push(EventBus.on('engine:color-changed', applyColor));
         }
 
         function handleAddEngine() {
@@ -1493,12 +1520,24 @@
         document.addEventListener('gesturechange', e => e.preventDefault());
         document.addEventListener('gestureend', e => e.preventDefault());
 
-        Loader.init();
-        Dialog.initDialog();
-        Search.init();
-        Shortcuts.init();
-        Bookmarks.init();
-        Settings.init();
+        function initAllModules() {
+            const initModules = [
+                ['Loader', () => Loader.init()],
+                ['Dialog', () => Dialog.initDialog()],
+                ['Search', () => Search.init()],
+                ['Shortcuts', () => Shortcuts.init()],
+                ['Bookmarks', () => Bookmarks.init()],
+                ['Settings', () => Settings.init()]
+            ];
+            initModules.forEach(([name, fn]) => {
+                try { fn(); } catch (e) { console.error('[HomePage] ' + name + ' init failed:', e); }
+            });
+        }
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initAllModules);
+        } else {
+            initAllModules();
+        }
     }
 
     function init() {
