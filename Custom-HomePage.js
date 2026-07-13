@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Custom HomePage
 // @namespace    https://github.com/user/Custom-HomePage
-// @version      1.9.0
+// @version      1.9.1
 // @description  自定义主页
 // @author       You
 // @match        *://*/*
@@ -80,12 +80,12 @@
     // ========== 配置管理 ==========
     const Config = {
         KEY: 'homepage_config',
-        VERSION: 3,
+        VERSION: 4,
         _afterSave: null,
 
         // 默认配置（所有持久化字段必须在此声明）
         defaults: {
-            version: 3,
+            version: 4,
             homepage: '',
             shortcutsVisible: true,
             searchEngines: [
@@ -153,7 +153,9 @@
                 password: '',
                 remotePath: 'homepage-config.json',
                 autoSync: false,
-                lastSyncTime: 0
+                lastSyncTime: 0,
+                lastUploadTime: 0,
+                lastDownloadTime: 0
             }
         },
 
@@ -204,6 +206,16 @@
                 }
             }
 
+            // v3 → v4：webdav 新增 lastUploadTime、lastDownloadTime
+            if (fromVersion < 4) {
+                if (!result.webdav) {
+                    result.webdav = JSON.parse(JSON.stringify(this.defaults.webdav));
+                } else {
+                    if (result.webdav.lastUploadTime === undefined) result.webdav.lastUploadTime = 0;
+                    if (result.webdav.lastDownloadTime === undefined) result.webdav.lastDownloadTime = 0;
+                }
+            }
+
             return result;
         },
 
@@ -249,6 +261,31 @@
         // 生成唯一 ID
         generateId() {
             return 'n' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+        },
+
+        // 格式化时间戳为友好格式
+        formatTime(timestamp) {
+            if (!timestamp) return '从未';
+            const date = new Date(timestamp);
+            const now = new Date();
+            const diff = now - date;
+            const day = 24 * 60 * 60 * 1000;
+
+            if (diff < 60 * 1000) return '刚刚';
+            if (diff < 60 * 60 * 1000) return Math.floor(diff / 60000) + '分钟前';
+            if (diff < day) return Math.floor(diff / 3600000) + '小时前';
+            if (diff < 2 * day) return '昨天';
+            if (diff < 7 * day) return Math.floor(diff / day) + '天前';
+
+            const y = date.getFullYear();
+            const m = String(date.getMonth() + 1).padStart(2, '0');
+            const d = String(date.getDate()).padStart(2, '0');
+            const hh = String(date.getHours()).padStart(2, '0');
+            const mm = String(date.getMinutes()).padStart(2, '0');
+            if (y === now.getFullYear()) {
+                return m + '-' + d + ' ' + hh + ':' + mm;
+            }
+            return y + '-' + m + '-' + d;
         }
     };
 
@@ -2321,6 +2358,10 @@
                 const json = JSON.stringify(cfg, null, 2);
                 const res = await this.request('PUT', json);
                 if (res.status >= 200 && res.status < 300) {
+                    const c = Config.load();
+                    c.webdav.lastUploadTime = Date.now();
+                    c.webdav.lastSyncTime = c.webdav.lastUploadTime;
+                    Storage.set(Config.KEY, c);
                     return { success: true, message: '上传成功' };
                 }
                 if (res.status === 401 || res.status === 403) {
@@ -2355,6 +2396,8 @@
                 }
                 const migrated = Config.migrate(data, data.version || 0);
                 migrated.version = Config.VERSION;
+                migrated.webdav.lastDownloadTime = Date.now();
+                migrated.webdav.lastSyncTime = migrated.webdav.lastDownloadTime;
                 Config.save(migrated);
                 return { success: true, message: '下载成功' };
             } catch (e) {
@@ -2393,7 +2436,8 @@
                 const res = await this.request('PUT', json);
                 if (res.status >= 200 && res.status < 300) {
                     const c = Config.load();
-                    c.webdav.lastSyncTime = Date.now();
+                    c.webdav.lastUploadTime = Date.now();
+                    c.webdav.lastSyncTime = c.webdav.lastUploadTime;
                     Storage.set(Config.KEY, c);
                 }
             } catch (e) {
@@ -2423,7 +2467,8 @@
                 if (remoteTime > localTime) {
                     const migrated = Config.migrate(data, data.version || 0);
                     migrated.version = Config.VERSION;
-                    migrated.webdav.lastSyncTime = Date.now();
+                    migrated.webdav.lastDownloadTime = Date.now();
+                    migrated.webdav.lastSyncTime = migrated.webdav.lastDownloadTime;
                     Config.save(migrated);
                     return { updated: true, message: '已从远程同步配置' };
                 }
@@ -2839,6 +2884,7 @@
                                     <div>
                                         <div class="settings-label">自动同步</div>
                                         <div class="settings-desc">配置变更后自动上传，页面加载时自动检查更新</div>
+                                        <div class="settings-desc" id="autosync-time" style="font-size:11px;color:#999;margin-top:2px;">上次同步：从未</div>
                                     </div>
                                     <label class="toggle-switch">
                                         <input type="checkbox" id="toggle-webdav-autosync">
@@ -2872,6 +2918,7 @@
                                     <div>
                                         <div class="settings-label">上传配置</div>
                                         <div class="settings-desc">将当前配置上传到 WebDAV</div>
+                                        <div class="settings-desc" id="upload-time" style="font-size:11px;color:#999;margin-top:2px;">上次上传：从未</div>
                                     </div>
                                     <button class="settings-btn" id="btn-webdav-upload">上传</button>
                                 </div>
@@ -2879,6 +2926,7 @@
                                     <div>
                                         <div class="settings-label">下载配置</div>
                                         <div class="settings-desc">从 WebDAV 下载并覆盖当前配置</div>
+                                        <div class="settings-desc" id="download-time" style="font-size:11px;color:#999;margin-top:2px;">上次下载：从未</div>
                                     </div>
                                     <button class="settings-btn settings-btn-secondary" id="btn-webdav-download">下载</button>
                                 </div>
@@ -3055,6 +3103,18 @@
             this.refreshEngineList();
             const toggle = document.getElementById('toggle-shortcuts');
             if (toggle) toggle.checked = Config.load().shortcutsVisible !== false;
+            this.refreshWebdavTimes();
+        },
+
+        // 刷新 WebDAV 时间显示
+        refreshWebdavTimes() {
+            const cfg = Config.load();
+            const autosyncEl = document.getElementById('autosync-time');
+            const uploadEl = document.getElementById('upload-time');
+            const downloadEl = document.getElementById('download-time');
+            if (autosyncEl) autosyncEl.textContent = '上次同步：' + Utils.formatTime(cfg.webdav.lastSyncTime);
+            if (uploadEl) uploadEl.textContent = '上次上传：' + Utils.formatTime(cfg.webdav.lastUploadTime);
+            if (downloadEl) downloadEl.textContent = '上次下载：' + Utils.formatTime(cfg.webdav.lastDownloadTime);
         },
 
         hide() {
@@ -3278,6 +3338,7 @@
                     alert(res.message);
                     btnUpload.disabled = false;
                     btnUpload.textContent = '上传';
+                    if (res.success) this.refreshWebdavTimes();
                 });
             }
 
