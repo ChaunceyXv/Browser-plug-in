@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Custom HomePage
 // @namespace    https://github.com/user/Custom-HomePage
-// @version      1.6.0
+// @version      1.7.0
 // @description  自定义主页
 // @author       You
 // @match        *://*/*
@@ -79,9 +79,11 @@
     // ========== 配置管理 ==========
     const Config = {
         KEY: 'homepage_config',
+        VERSION: 1,
 
         // 默认配置（所有持久化字段必须在此声明）
         defaults: {
+            version: 1,
             homepage: '',
             shortcutsVisible: true,
             searchEngines: [
@@ -145,9 +147,37 @@
             ]
         },
 
-        // 加载配置（合并默认值）
+        // 加载配置（含版本迁移）
         load() {
-            return Object.assign({}, this.defaults, Storage.get(this.KEY, {}));
+            const stored = Storage.get(this.KEY, {});
+            const savedVersion = stored.version || 0;
+
+            // 版本一致，直接用
+            if (savedVersion === this.VERSION) {
+                return stored;
+            }
+
+            // 需要迁移
+            const migrated = this.migrate(stored, savedVersion);
+            migrated.version = this.VERSION;
+            Storage.set(this.KEY, migrated);
+            return migrated;
+        },
+
+        // 配置迁移（从 fromVersion 升到当前版本）
+        migrate(data, fromVersion) {
+            let result = { ...data };
+
+            // v0 → v1：补全所有缺失的顶层字段
+            if (fromVersion < 1) {
+                result = Object.assign({}, this.defaults, result);
+                // bookmarkRoot 单独处理：用户有就用用户的，没有用默认
+                if (!result.bookmarkRoot) {
+                    result.bookmarkRoot = JSON.parse(JSON.stringify(this.defaults.bookmarkRoot));
+                }
+            }
+
+            return result;
         },
 
         // 保存配置
@@ -1170,6 +1200,7 @@
     // ========== 书签模块 ==========
     const Bookmarks = {
         visible: false,
+        _initialized: false,
         dragInfo: null,
         contextMenuId: null,
         pendingAction: null,
@@ -1567,11 +1598,13 @@
         },
 
         init() {
+            if (this._initialized) return;
             const container = document.getElementById('bookmarks-overlay');
             if (container) container.innerHTML = this.render();
             this.refreshColors();
             this.bindEvents();
             this.initDialog();
+            this._initialized = true;
         },
 
         // 应用当前引擎颜色
@@ -1997,6 +2030,7 @@
     // ========== 设置模块 ==========
     const Settings = {
         visible: false,
+        _initialized: false,
         selectedColor: COLOR_POOL[0],
         editingIndex: -1,
 
@@ -2266,6 +2300,27 @@
                         color: #999;
                         margin-top: 2px;
                     }
+                    .settings-btn {
+                        padding: 8px 18px;
+                        border: none;
+                        border-radius: 8px;
+                        font-size: 14px;
+                        cursor: pointer;
+                        background: var(--engine-color, #008373);
+                        color: #fff;
+                        flex-shrink: 0;
+                        -webkit-tap-highlight-color: transparent;
+                    }
+                    .settings-btn:active {
+                        opacity: .8;
+                    }
+                    .settings-btn-secondary {
+                        background: #f0f0f0;
+                        color: #333;
+                    }
+                    .settings-btn-danger {
+                        background: #e55;
+                    }
                     .toggle-switch {
                         position: relative;
                         display: inline-block;
@@ -2352,19 +2407,45 @@
                             </div>
                             <div class="settings-section" id="section-toolbar"><p style="color:#999;text-align:center;margin-top:40px;">工具栏 — 开发中...</p></div>
                             <div class="settings-section" id="section-webdav"><p style="color:#999;text-align:center;margin-top:40px;">WebDAV 同步 — 开发中...</p></div>
-                            <div class="settings-section" id="section-profile"><p style="color:#999;text-align:center;margin-top:40px;">配置文件导出/导入 — 开发中...</p></div>
-                            <div class="settings-section" id="section-reset"><p style="color:#999;text-align:center;margin-top:40px;">还原默认设置 — 开发中...</p></div>
+                            <div class="settings-section" id="section-profile">
+                                <div class="settings-item">
+                                    <div>
+                                        <div class="settings-label">导出配置</div>
+                                        <div class="settings-desc">将当前配置保存为 JSON 文件</div>
+                                    </div>
+                                    <button class="settings-btn" id="btn-export">导出</button>
+                                </div>
+                                <div class="settings-item">
+                                    <div>
+                                        <div class="settings-label">导入配置</div>
+                                        <div class="settings-desc">从 JSON 文件恢复配置（将覆盖当前配置）</div>
+                                    </div>
+                                    <label class="settings-btn settings-btn-secondary" for="import-file">导入</label>
+                                    <input type="file" id="import-file" accept=".json" style="display:none">
+                                </div>
+                            </div>
+                            <div class="settings-section" id="section-reset">
+                                <div class="settings-item">
+                                    <div>
+                                        <div class="settings-label">还原默认设置</div>
+                                        <div class="settings-desc">清空所有自定义数据，恢复为初始状态</div>
+                                    </div>
+                                    <button class="settings-btn settings-btn-danger" id="btn-reset">还原</button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>`;
         },
 
         init() {
+            if (this._initialized) return;
             const container = document.getElementById('settings-overlay');
             if (container) container.innerHTML = this.render();
             this.applyTabColor();
             this.bindEvents();
             this.refreshEngineList();
+            this._initialized = true;
         },
 
         applyTabColor() {
@@ -2510,6 +2591,49 @@
             if (overlay) overlay.style.pointerEvents = 'none';
         },
 
+        // 导出配置为 JSON 文件
+        exportConfig() {
+            const cfg = Config.load();
+            const json = JSON.stringify(cfg, null, 2);
+            const blob = new Blob([json], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `homepage-config-${new Date().toISOString().slice(0, 10)}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        },
+
+        // 导入配置（传入 JSON 字符串，验证后应用）
+        importConfig(jsonStr) {
+            try {
+                const data = JSON.parse(jsonStr);
+                // 基本校验：必须是对象
+                if (typeof data !== 'object' || data === null) {
+                    return { success: false, message: '配置格式错误' };
+                }
+                // 保存前先过一遍 Config 的迁移逻辑，补全缺失字段
+                const tempKey = Config.KEY + '_temp';
+                Storage.set(tempKey, data);
+                const migrated = Config.migrate(data, data.version || 0);
+                migrated.version = Config.VERSION;
+                Storage.set(Config.KEY, migrated);
+                Storage.set(tempKey, undefined);
+                return { success: true };
+            } catch (e) {
+                return { success: false, message: '解析失败：' + e.message };
+            }
+        },
+
+        // 还原为默认配置
+        resetToDefault() {
+            const defaults = JSON.parse(JSON.stringify(Config.defaults));
+            defaults.version = Config.VERSION;
+            Config.save(defaults);
+        },
+
         switchTab(tabName) {
             document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
             document.querySelectorAll('.settings-section').forEach(s => s.classList.remove('active'));
@@ -2583,6 +2707,50 @@
                 });
             }
 
+            // 导出配置
+            const btnExport = document.getElementById('btn-export');
+            if (btnExport) {
+                btnExport.addEventListener('click', () => this.exportConfig());
+            }
+
+            // 导入配置
+            const importFile = document.getElementById('import-file');
+            if (importFile) {
+                importFile.addEventListener('change', (e) => {
+                    const file = e.target.files[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = (ev) => {
+                        const result = confirm('导入配置将覆盖当前所有设置，确定继续吗？');
+                        if (!result) {
+                            importFile.value = '';
+                            return;
+                        }
+                        const res = this.importConfig(ev.target.result);
+                        if (res.success) {
+                            alert('导入成功，页面即将刷新');
+                            setTimeout(() => location.reload(), 300);
+                        } else {
+                            alert(res.message);
+                        }
+                        importFile.value = '';
+                    };
+                    reader.readAsText(file);
+                });
+            }
+
+            // 还原默认设置
+            const btnReset = document.getElementById('btn-reset');
+            if (btnReset) {
+                btnReset.addEventListener('click', () => {
+                    const result = confirm('确定要还原为默认设置吗？所有自定义数据将被清空！');
+                    if (!result) return;
+                    this.resetToDefault();
+                    alert('已还原默认设置，页面即将刷新');
+                    setTimeout(() => location.reload(), 300);
+                });
+            }
+
             // 点击外部关闭设置面板
             document.addEventListener('click', (e) => {
                 if (!this.visible) return;
@@ -2632,6 +2800,7 @@
                 } else {
                     Bookmarks.addBookmarkToRoot(title, url);
                 }
+                setTimeout(() => location.reload(), 300);
             }
         );
     }
