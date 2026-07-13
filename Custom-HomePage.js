@@ -1460,41 +1460,19 @@
                     .bookmarks-header {
                         display: flex;
                         align-items: center;
-                        justify-content: space-between;
-                        padding: 16px 20px 8px;
+                        gap: 10px;
+                        padding: 16px 20px;
                         border-bottom: 1px solid #f0f0f0;
                         flex-shrink: 0;
-                        flex-direction: column;
-                        gap: 10px;
-                    }
-                    .bookmarks-header-row {
-                        display: flex;
-                        align-items: center;
-                        justify-content: space-between;
-                        width: 100%;
                     }
                     .bookmarks-title {
                         font-size: 18px;
                         font-weight: 600;
                         color: #333;
-                    }
-                    .bookmarks-close {
-                        width: 32px;
-                        height: 32px;
-                        display: flex;
-                        align-items: center;
-                        justify-content: center;
-                        cursor: pointer;
-                        border-radius: 50%;
-                        -webkit-tap-highlight-color: transparent;
-                        font-size: 20px;
-                        color: #999;
-                    }
-                    .bookmarks-close:active {
-                        background: #f0f0f0;
+                        flex-shrink: 0;
                     }
                     .bookmarks-search-wrap {
-                        width: 100%;
+                        flex: 1;
                         position: relative;
                     }
                     .bookmarks-search-input {
@@ -1537,6 +1515,22 @@
                         border-radius: 50%;
                     }
                     .bookmarks-search-clear:active {
+                        background: #f0f0f0;
+                    }
+                    .bookmarks-close {
+                        width: 32px;
+                        height: 32px;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        cursor: pointer;
+                        border-radius: 50%;
+                        -webkit-tap-highlight-color: transparent;
+                        font-size: 20px;
+                        color: #999;
+                        flex-shrink: 0;
+                    }
+                    .bookmarks-close:active {
                         background: #f0f0f0;
                     }
                     .bookmarks-list {
@@ -1759,15 +1753,13 @@
 
                 <div id="bookmarks-panel">
                     <div class="bookmarks-header">
-                        <div class="bookmarks-header-row">
-                            <span class="bookmarks-title">书签</span>
-                            <span class="bookmarks-close" id="bookmarks-close">✕</span>
-                        </div>
+                        <span class="bookmarks-title">书签</span>
                         <div class="bookmarks-search-wrap">
                             <span class="bookmarks-search-icon">🔍</span>
                             <input type="text" class="bookmarks-search-input" id="bookmarks-search" placeholder="搜索书签...">
                             <span class="bookmarks-search-clear" id="bookmarks-search-clear" style="display:none">✕</span>
                         </div>
+                        <span class="bookmarks-close" id="bookmarks-close">✕</span>
                     </div>
                     <div class="bookmarks-list" id="bookmarks-list">${treeHTML}</div>
                 </div>
