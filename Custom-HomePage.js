@@ -1633,7 +1633,7 @@
                         border-radius: 50%;
                         -webkit-tap-highlight-color: transparent;
                         font-size: 16px;
-                        color: #ccc;
+                        color: var(--bm-color, #ccc);
                         flex-shrink: 0;
                         letter-spacing: 1px;
                         font-weight: 700;
