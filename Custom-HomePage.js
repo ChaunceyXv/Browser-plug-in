@@ -1505,12 +1505,12 @@
                         font-size: 14px;
                         color: #333;
                         outline: none;
-                        background: #f9f9f9;
+                        background: transparent;
                         box-sizing: border-box;
                     }
                     .bookmarks-search-input:focus {
                         border-color: var(--bm-color, #008373);
-                        background: #fff;
+                        background: transparent;
                     }
                     .bookmarks-search-icon {
                         position: absolute;
