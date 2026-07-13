@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Custom HomePage
 // @namespace    https://github.com/user/Custom-HomePage
-// @version      1.8.1
+// @version      1.9.0
 // @description  自定义主页
 // @author       You
 // @match        *://*/*
@@ -80,11 +80,12 @@
     // ========== 配置管理 ==========
     const Config = {
         KEY: 'homepage_config',
-        VERSION: 2,
+        VERSION: 3,
+        _afterSave: null,
 
         // 默认配置（所有持久化字段必须在此声明）
         defaults: {
-            version: 2,
+            version: 3,
             homepage: '',
             shortcutsVisible: true,
             searchEngines: [
@@ -150,7 +151,9 @@
                 url: '',
                 username: '',
                 password: '',
-                remotePath: 'homepage-config.json'
+                remotePath: 'homepage-config.json',
+                autoSync: false,
+                lastSyncTime: 0
             }
         },
 
@@ -191,12 +194,25 @@
                 }
             }
 
+            // v2 → v3：webdav 新增 autoSync、lastSyncTime
+            if (fromVersion < 3) {
+                if (!result.webdav) {
+                    result.webdav = JSON.parse(JSON.stringify(this.defaults.webdav));
+                } else {
+                    if (result.webdav.autoSync === undefined) result.webdav.autoSync = false;
+                    if (result.webdav.lastSyncTime === undefined) result.webdav.lastSyncTime = 0;
+                }
+            }
+
             return result;
         },
 
         // 保存配置
         save(config) {
             Storage.set(this.KEY, config);
+            if (this._afterSave) {
+                try { this._afterSave(); } catch (e) {}
+            }
         }
     };
 
@@ -1218,6 +1234,7 @@
         dragInfo: null,
         contextMenuId: null,
         pendingAction: null,
+        searchKeyword: '',
 
         // 对节点子项排序：文件夹在前，书签在后
         sortChildren(nodes) {
@@ -1244,6 +1261,56 @@
                 }
             }
             return null;
+        },
+
+        // 高亮搜索关键词
+        highlight(text, keyword) {
+            if (!keyword) return text;
+            const idx = text.toLowerCase().indexOf(keyword.toLowerCase());
+            if (idx < 0) return text;
+            return text.slice(0, idx) + '<mark>' + text.slice(idx, idx + keyword.length) + '</mark>' + text.slice(idx + keyword.length);
+        },
+
+        // 递归搜索匹配的书签（返回书签节点数组）
+        searchBookmarks(nodes, keyword) {
+            const results = [];
+            const kw = keyword.toLowerCase();
+            const search = (list) => {
+                for (const node of list) {
+                    if (node.type === 'bookmark') {
+                        if (node.title.toLowerCase().includes(kw) ||
+                            (node.url && node.url.toLowerCase().includes(kw))) {
+                            results.push(node);
+                        }
+                    }
+                    if (node.children && node.children.length > 0) {
+                        search(node.children);
+                    }
+                }
+            };
+            search(nodes);
+            return results;
+        },
+
+        // 构建搜索结果 HTML
+        buildSearchResults(keyword) {
+            const root = Config.load().bookmarkRoot;
+            const results = this.searchBookmarks(root.children || [], keyword);
+            if (results.length === 0) {
+                return `<div class="search-empty">没有找到匹配的书签</div>`;
+            }
+            return results.map(node => {
+                const color = node.color || Utils.randomColor();
+                return `
+                    <div class="tree-node" data-id="${node.id}" data-type="bookmark" data-url="${node.url || ''}" draggable="true">
+                        <div class="tree-row bookmark" style="padding-left:32px">
+                            <span class="bm-icon" style="background:${color}">${node.title.charAt(0)}</span>
+                            <span class="tree-title">${this.highlight(node.title, keyword)}</span>
+                            <span class="tree-url">${this.highlight(node.url || '', keyword)}</span>
+                            <span class="tree-menu-btn" data-id="${node.id}">⋮</span>
+                        </div>
+                    </div>`;
+            }).join('');
         },
 
         // 添加书签到根目录
@@ -1358,9 +1425,17 @@
                         display: flex;
                         align-items: center;
                         justify-content: space-between;
-                        padding: 16px 20px;
+                        padding: 16px 20px 8px;
                         border-bottom: 1px solid #f0f0f0;
                         flex-shrink: 0;
+                        flex-direction: column;
+                        gap: 10px;
+                    }
+                    .bookmarks-header-row {
+                        display: flex;
+                        align-items: center;
+                        justify-content: space-between;
+                        width: 100%;
                     }
                     .bookmarks-title {
                         font-size: 18px;
@@ -1382,11 +1457,70 @@
                     .bookmarks-close:active {
                         background: #f0f0f0;
                     }
+                    .bookmarks-search-wrap {
+                        width: 100%;
+                        position: relative;
+                    }
+                    .bookmarks-search-input {
+                        width: 100%;
+                        padding: 8px 12px 8px 32px;
+                        border: 1px solid #e0e0e0;
+                        border-radius: 8px;
+                        font-size: 14px;
+                        color: #333;
+                        outline: none;
+                        background: #f9f9f9;
+                        box-sizing: border-box;
+                    }
+                    .bookmarks-search-input:focus {
+                        border-color: var(--bm-color, #008373);
+                        background: #fff;
+                    }
+                    .bookmarks-search-icon {
+                        position: absolute;
+                        left: 10px;
+                        top: 50%;
+                        transform: translateY(-50%);
+                        font-size: 14px;
+                        color: #ccc;
+                        pointer-events: none;
+                    }
+                    .bookmarks-search-clear {
+                        position: absolute;
+                        right: 8px;
+                        top: 50%;
+                        transform: translateY(-50%);
+                        width: 20px;
+                        height: 20px;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        cursor: pointer;
+                        color: #ccc;
+                        font-size: 14px;
+                        border-radius: 50%;
+                    }
+                    .bookmarks-search-clear:active {
+                        background: #f0f0f0;
+                    }
                     .bookmarks-list {
                         flex: 1;
                         overflow-y: auto;
                         padding: 8px 0;
                         -webkit-overflow-scrolling: touch;
+                    }
+                    .search-empty {
+                        padding: 40px 20px;
+                        text-align: center;
+                        color: #ccc;
+                        font-size: 14px;
+                    }
+                    .tree-title mark,
+                    .tree-url mark {
+                        background: #ffe066;
+                        color: #333;
+                        padding: 0 2px;
+                        border-radius: 2px;
                     }
                     .tree-node.dragging {
                         opacity: .4;
@@ -1589,8 +1723,15 @@
 
                 <div id="bookmarks-panel">
                     <div class="bookmarks-header">
-                        <span class="bookmarks-title">书签</span>
-                        <span class="bookmarks-close" id="bookmarks-close">✕</span>
+                        <div class="bookmarks-header-row">
+                            <span class="bookmarks-title">书签</span>
+                            <span class="bookmarks-close" id="bookmarks-close">✕</span>
+                        </div>
+                        <div class="bookmarks-search-wrap">
+                            <span class="bookmarks-search-icon">🔍</span>
+                            <input type="text" class="bookmarks-search-input" id="bookmarks-search" placeholder="搜索书签...">
+                            <span class="bookmarks-search-clear" id="bookmarks-search-clear" style="display:none">✕</span>
+                        </div>
                     </div>
                     <div class="bookmarks-list" id="bookmarks-list">${treeHTML}</div>
                 </div>
@@ -1910,6 +2051,32 @@
             const closeBtn = document.getElementById('bookmarks-close');
             if (closeBtn) closeBtn.addEventListener('click', () => this.hide());
 
+            // 搜索框
+            const searchInput = document.getElementById('bookmarks-search');
+            const searchClear = document.getElementById('bookmarks-search-clear');
+            if (searchInput) {
+                let debounceTimer = null;
+                searchInput.addEventListener('input', () => {
+                    clearTimeout(debounceTimer);
+                    debounceTimer = setTimeout(() => {
+                        this.doSearch(searchInput.value);
+                    }, 150);
+                });
+                searchInput.addEventListener('keydown', (e) => {
+                    if (e.key === 'Escape') {
+                        searchInput.value = '';
+                        this.doSearch('');
+                    }
+                });
+            }
+            if (searchClear) {
+                searchClear.addEventListener('click', () => {
+                    if (searchInput) searchInput.value = '';
+                    this.doSearch('');
+                    if (searchInput) searchInput.focus();
+                });
+            }
+
             const listEl = document.getElementById('bookmarks-list');
             if (!listEl) return;
 
@@ -2030,15 +2197,36 @@
             });
         },
 
-        // 刷新面板视图（保留当前状态）
-        refreshPanel() {
-            const root = Config.load().bookmarkRoot;
+        // 执行搜索
+        doSearch(keyword) {
+            this.searchKeyword = keyword;
             const container = document.getElementById('bookmarks-list');
-            if (container) {
+            const clearBtn = document.getElementById('bookmarks-search-clear');
+            if (!container) return;
+
+            if (!keyword.trim()) {
+                const root = Config.load().bookmarkRoot;
                 this.sortChildren(root.children);
                 container.innerHTML = this.buildTreeNode(root, 0);
-                this.refreshColors();
+                if (clearBtn) clearBtn.style.display = 'none';
+            } else {
+                container.innerHTML = this.buildSearchResults(keyword.trim());
+                if (clearBtn) clearBtn.style.display = 'flex';
             }
+        },
+
+        // 刷新面板视图（保留当前状态）
+        refreshPanel() {
+            const container = document.getElementById('bookmarks-list');
+            if (!container) return;
+            if (this.searchKeyword) {
+                container.innerHTML = this.buildSearchResults(this.searchKeyword);
+            } else {
+                const root = Config.load().bookmarkRoot;
+                this.sortChildren(root.children);
+                container.innerHTML = this.buildTreeNode(root, 0);
+            }
+            this.refreshColors();
         }
     };
 
@@ -2174,6 +2362,74 @@
                     return { success: false, message: '远程文件不是有效的 JSON' };
                 }
                 return { success: false, message: '下载失败：' + e.message };
+            }
+        },
+
+        // 自动同步相关
+        _syncTimer: null,
+        _syncing: false,
+
+        // 触发自动上传（防抖，避免频繁请求）
+        triggerAutoUpload() {
+            const cfg = Config.load();
+            if (!cfg.webdav.autoSync || !cfg.webdav.url) return;
+            if (this._syncing) return;
+
+            clearTimeout(this._syncTimer);
+            this._syncTimer = setTimeout(() => {
+                this.autoUpload();
+            }, 2000);
+        },
+
+        // 执行自动上传（静默，不打扰用户）
+        async autoUpload() {
+            const cfg = Config.load();
+            if (!cfg.webdav.autoSync || !cfg.webdav.url) return;
+            if (this._syncing) return;
+
+            this._syncing = true;
+            try {
+                const json = JSON.stringify(cfg, null, 2);
+                const res = await this.request('PUT', json);
+                if (res.status >= 200 && res.status < 300) {
+                    const c = Config.load();
+                    c.webdav.lastSyncTime = Date.now();
+                    Storage.set(Config.KEY, c);
+                }
+            } catch (e) {
+                // 静默失败，不打扰用户
+            } finally {
+                this._syncing = false;
+            }
+        },
+
+        // 启动时检查远程更新（页面加载时调用）
+        async checkRemoteUpdate() {
+            const cfg = Config.load();
+            if (!cfg.webdav.autoSync || !cfg.webdav.url) return null;
+
+            try {
+                const res = await this.request('GET');
+                if (res.status === 404) return null;
+                if (res.status < 200 || res.status >= 300) return null;
+
+                const data = JSON.parse(res.responseText);
+                if (typeof data !== 'object' || data === null) return null;
+
+                const remoteTime = data.webdav?.lastSyncTime || 0;
+                const localTime = cfg.webdav.lastSyncTime || 0;
+
+                // 远程比本地新，下载覆盖
+                if (remoteTime > localTime) {
+                    const migrated = Config.migrate(data, data.version || 0);
+                    migrated.version = Config.VERSION;
+                    migrated.webdav.lastSyncTime = Date.now();
+                    Config.save(migrated);
+                    return { updated: true, message: '已从远程同步配置' };
+                }
+                return { updated: false };
+            } catch (e) {
+                return null;
             }
         }
     };
@@ -2579,6 +2835,16 @@
                             </div>
                             <div class="settings-section" id="section-toolbar"><p style="color:#999;text-align:center;margin-top:40px;">工具栏 — 开发中...</p></div>
                             <div class="settings-section" id="section-webdav">
+                                <div class="settings-item">
+                                    <div>
+                                        <div class="settings-label">自动同步</div>
+                                        <div class="settings-desc">配置变更后自动上传，页面加载时自动检查更新</div>
+                                    </div>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" id="toggle-webdav-autosync">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                </div>
                                 <div class="settings-item settings-item-column">
                                     <div class="settings-label">WebDAV 地址</div>
                                     <input type="text" class="settings-input" id="webdav-url" placeholder="https://dav.example.com/">
@@ -2961,6 +3227,18 @@
                 });
             }
 
+            // WebDAV：自动同步开关
+            const toggleAutoSync = document.getElementById('toggle-webdav-autosync');
+            if (toggleAutoSync) {
+                const cfg = Config.load();
+                toggleAutoSync.checked = cfg.webdav.autoSync === true;
+                toggleAutoSync.addEventListener('change', () => {
+                    const c = Config.load();
+                    c.webdav.autoSync = toggleAutoSync.checked;
+                    Config.save(c);
+                });
+            }
+
             // WebDAV：输入框自动保存
             const webdavFields = ['webdav-url', 'webdav-username', 'webdav-password', 'webdav-path'];
             const webdavKeys = { 'webdav-url': 'url', 'webdav-username': 'username', 'webdav-password': 'password', 'webdav-path': 'remotePath' };
@@ -3155,6 +3433,16 @@
         Shortcuts.init();
         Bookmarks.init();
         Settings.init();
+
+        // 设置 WebDAV 自动同步 hook
+        Config._afterSave = () => WebDAV.triggerAutoUpload();
+
+        // 检查远程更新
+        WebDAV.checkRemoteUpdate().then(result => {
+            if (result && result.updated) {
+                setTimeout(() => location.reload(), 500);
+            }
+        });
     }
 
     // ========== 入口 ==========
