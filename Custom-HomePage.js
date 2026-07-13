@@ -8,6 +8,7 @@
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_registerMenuCommand
+// @grant        GM_xmlhttpRequest
 // @run-at       document-start
 // ==/UserScript==
 
@@ -2060,6 +2061,23 @@
             return 'Basic ' + btoa(user + ':' + pass);
         },
 
+        // 用 GM_xmlhttpRequest 发请求（绕开 CORS）
+        request(method, body) {
+            return new Promise((resolve, reject) => {
+                const headers = { 'Authorization': this.getAuthHeader() };
+                if (body) headers['Content-Type'] = 'application/json';
+                GM_xmlhttpRequest({
+                    method: method,
+                    url: this.getFullUrl(),
+                    headers: headers,
+                    data: body,
+                    onload: (res) => resolve(res),
+                    onerror: (err) => reject(new Error(err.error || '网络错误')),
+                    ontimeout: () => reject(new Error('请求超时'))
+                });
+            });
+        },
+
         // 测试连接（HEAD 请求）
         async testConnection() {
             const cfg = Config.load();
@@ -2067,12 +2085,12 @@
                 return { success: false, message: '请填写 WebDAV 地址' };
             }
             try {
-                const res = await fetch(this.getFullUrl(), {
-                    method: 'HEAD',
-                    headers: { 'Authorization': this.getAuthHeader() }
-                });
-                if (res.ok || res.status === 404) {
-                    return { success: true, message: res.status === 404 ? '连接成功（文件不存在）' : '连接成功' };
+                const res = await this.request('HEAD');
+                if (res.status >= 200 && res.status < 300) {
+                    return { success: true, message: '连接成功' };
+                }
+                if (res.status === 404) {
+                    return { success: true, message: '连接成功（文件不存在）' };
                 }
                 return { success: false, message: '连接失败：' + res.status + ' ' + res.statusText };
             } catch (e) {
@@ -2088,15 +2106,8 @@
             }
             try {
                 const json = JSON.stringify(cfg, null, 2);
-                const res = await fetch(this.getFullUrl(), {
-                    method: 'PUT',
-                    headers: {
-                        'Authorization': this.getAuthHeader(),
-                        'Content-Type': 'application/json'
-                    },
-                    body: json
-                });
-                if (res.ok) {
+                const res = await this.request('PUT', json);
+                if (res.status >= 200 && res.status < 300) {
                     return { success: true, message: '上传成功' };
                 }
                 return { success: false, message: '上传失败：' + res.status + ' ' + res.statusText };
@@ -2112,18 +2123,14 @@
                 return { success: false, message: '请填写 WebDAV 地址' };
             }
             try {
-                const res = await fetch(this.getFullUrl(), {
-                    method: 'GET',
-                    headers: { 'Authorization': this.getAuthHeader() }
-                });
-                if (!res.ok) {
-                    if (res.status === 404) {
-                        return { success: false, message: '远程文件不存在' };
-                    }
+                const res = await this.request('GET');
+                if (res.status === 404) {
+                    return { success: false, message: '远程文件不存在' };
+                }
+                if (res.status < 200 || res.status >= 300) {
                     return { success: false, message: '下载失败：' + res.status + ' ' + res.statusText };
                 }
-                const text = await res.text();
-                const data = JSON.parse(text);
+                const data = JSON.parse(res.responseText);
                 if (typeof data !== 'object' || data === null) {
                     return { success: false, message: '远程文件格式错误' };
                 }
