@@ -2633,6 +2633,7 @@
                 } else {
                     Bookmarks.addBookmarkToRoot(title, url);
                 }
+                setTimeout(() => location.reload(), 300);
             }
         );
     }
