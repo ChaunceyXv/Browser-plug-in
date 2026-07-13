@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         Custom HomePage
 // @namespace    https://github.com/user/Custom-HomePage
-// @version      1.7.0
+// @version      1.8.1
 // @description  自定义主页
 // @author       You
 // @match        *://*/*
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_registerMenuCommand
+// @grant        GM_xmlhttpRequest
 // @run-at       document-start
 // ==/UserScript==
 
@@ -79,11 +80,11 @@
     // ========== 配置管理 ==========
     const Config = {
         KEY: 'homepage_config',
-        VERSION: 1,
+        VERSION: 2,
 
         // 默认配置（所有持久化字段必须在此声明）
         defaults: {
-            version: 1,
+            version: 2,
             homepage: '',
             shortcutsVisible: true,
             searchEngines: [
@@ -144,7 +145,13 @@
                 { id: 's4', title: '地图',    url: 'https://maps.google.com',     color: '#4285F4' },
                 { id: 's5', title: '翻译',    url: 'https://translate.google.com', color: '#1A73E8' },
                 { id: 's6', title: 'Twitter', url: 'https://twitter.com',         color: '#1DA1F2' }
-            ]
+            ],
+            webdav: {
+                url: '',
+                username: '',
+                password: '',
+                remotePath: 'homepage-config.json'
+            }
         },
 
         // 加载配置（含版本迁移）
@@ -174,6 +181,13 @@
                 // bookmarkRoot 单独处理：用户有就用用户的，没有用默认
                 if (!result.bookmarkRoot) {
                     result.bookmarkRoot = JSON.parse(JSON.stringify(this.defaults.bookmarkRoot));
+                }
+            }
+
+            // v1 → v2：新增 webdav 配置
+            if (fromVersion < 2) {
+                if (!result.webdav) {
+                    result.webdav = JSON.parse(JSON.stringify(this.defaults.webdav));
                 }
             }
 
@@ -2027,6 +2041,142 @@
         }
     };
 
+    // ========== WebDAV 同步模块 ==========
+    const WebDAV = {
+        // 获取完整的远程文件 URL
+        getFullUrl() {
+            const cfg = Config.load();
+            let base = cfg.webdav.url || '';
+            const path = cfg.webdav.remotePath || 'homepage-config.json';
+            if (base && !base.endsWith('/')) base += '/';
+            return base + path;
+        },
+
+        // 获取 Basic Auth 头
+        getAuthHeader() {
+            const cfg = Config.load();
+            const user = cfg.webdav.username || '';
+            const pass = cfg.webdav.password || '';
+            return 'Basic ' + btoa(unescape(encodeURIComponent(user + ':' + pass)));
+        },
+
+        // 从 GM_xmlhttpRequest 错误对象中提取错误信息
+        extractError(err) {
+            if (!err) return '未知错误';
+            if (typeof err === 'string') return err;
+            if (err.error) return err.error;
+            if (err.statusText) return err.statusText;
+            if (err.message) return err.message;
+            if (err.responseText) return err.responseText.slice(0, 200);
+            return '网络请求失败';
+        },
+
+        // 用 GM_xmlhttpRequest 发请求（绕开 CORS）
+        request(method, body) {
+            return new Promise((resolve, reject) => {
+                const url = this.getFullUrl();
+                const headers = { 'Authorization': this.getAuthHeader() };
+                if (body) headers['Content-Type'] = 'application/json';
+
+                GM_xmlhttpRequest({
+                    method: method,
+                    url: url,
+                    headers: headers,
+                    data: body,
+                    timeout: 15000,
+                    onload: (res) => resolve(res),
+                    onerror: (err) => {
+                        const msg = this.extractError(err);
+                        reject(new Error(msg));
+                    },
+                    ontimeout: () => reject(new Error('请求超时（15秒）'))
+                });
+            });
+        },
+
+        // 测试连接（先用 HEAD，失败则用 GET 重试）
+        async testConnection() {
+            const cfg = Config.load();
+            if (!cfg.webdav.url) {
+                return { success: false, message: '请填写 WebDAV 地址' };
+            }
+            try {
+                let res;
+                try {
+                    res = await this.request('HEAD');
+                } catch (headErr) {
+                    res = await this.request('GET');
+                }
+                if (res.status >= 200 && res.status < 300) {
+                    return { success: true, message: '连接成功' };
+                }
+                if (res.status === 404) {
+                    return { success: true, message: '连接成功（文件不存在）' };
+                }
+                if (res.status === 401 || res.status === 403) {
+                    return { success: false, message: '认证失败：请检查用户名和密码' };
+                }
+                return { success: false, message: '连接失败：' + res.status + ' ' + (res.statusText || '') };
+            } catch (e) {
+                return { success: false, message: '网络错误：' + e.message };
+            }
+        },
+
+        // 上传配置到 WebDAV
+        async upload() {
+            const cfg = Config.load();
+            if (!cfg.webdav.url) {
+                return { success: false, message: '请填写 WebDAV 地址' };
+            }
+            try {
+                const json = JSON.stringify(cfg, null, 2);
+                const res = await this.request('PUT', json);
+                if (res.status >= 200 && res.status < 300) {
+                    return { success: true, message: '上传成功' };
+                }
+                if (res.status === 401 || res.status === 403) {
+                    return { success: false, message: '认证失败：请检查用户名和密码' };
+                }
+                return { success: false, message: '上传失败：' + res.status + ' ' + (res.statusText || '') };
+            } catch (e) {
+                return { success: false, message: '网络错误：' + e.message };
+            }
+        },
+
+        // 从 WebDAV 下载配置
+        async download() {
+            const cfg = Config.load();
+            if (!cfg.webdav.url) {
+                return { success: false, message: '请填写 WebDAV 地址' };
+            }
+            try {
+                const res = await this.request('GET');
+                if (res.status === 404) {
+                    return { success: false, message: '远程文件不存在' };
+                }
+                if (res.status === 401 || res.status === 403) {
+                    return { success: false, message: '认证失败：请检查用户名和密码' };
+                }
+                if (res.status < 200 || res.status >= 300) {
+                    return { success: false, message: '下载失败：' + res.status + ' ' + (res.statusText || '') };
+                }
+                const data = JSON.parse(res.responseText);
+                if (typeof data !== 'object' || data === null) {
+                    return { success: false, message: '远程文件格式错误' };
+                }
+                const migrated = Config.migrate(data, data.version || 0);
+                migrated.version = Config.VERSION;
+                Config.save(migrated);
+                return { success: true, message: '下载成功' };
+            } catch (e) {
+                if (e instanceof SyntaxError) {
+                    return { success: false, message: '远程文件不是有效的 JSON' };
+                }
+                return { success: false, message: '下载失败：' + e.message };
+            }
+        }
+    };
+
     // ========== 设置模块 ==========
     const Settings = {
         visible: false,
@@ -2321,6 +2471,27 @@
                     .settings-btn-danger {
                         background: #e55;
                     }
+                    .settings-item-column {
+                        flex-direction: column;
+                        align-items: flex-start;
+                        gap: 8px;
+                    }
+                    .settings-item-column .settings-label {
+                        font-size: 14px;
+                    }
+                    .settings-input {
+                        width: 100%;
+                        padding: 10px 12px;
+                        border: 1px solid #e0e0e0;
+                        border-radius: 8px;
+                        font-size: 14px;
+                        box-sizing: border-box;
+                        outline: none;
+                        transition: border-color .2s;
+                    }
+                    .settings-input:focus {
+                        border-color: var(--engine-color, #008373);
+                    }
                     .toggle-switch {
                         position: relative;
                         display: inline-block;
@@ -2406,7 +2577,45 @@
                                 </div>
                             </div>
                             <div class="settings-section" id="section-toolbar"><p style="color:#999;text-align:center;margin-top:40px;">工具栏 — 开发中...</p></div>
-                            <div class="settings-section" id="section-webdav"><p style="color:#999;text-align:center;margin-top:40px;">WebDAV 同步 — 开发中...</p></div>
+                            <div class="settings-section" id="section-webdav">
+                                <div class="settings-item settings-item-column">
+                                    <div class="settings-label">WebDAV 地址</div>
+                                    <input type="text" class="settings-input" id="webdav-url" placeholder="https://dav.example.com/">
+                                </div>
+                                <div class="settings-item settings-item-column">
+                                    <div class="settings-label">用户名</div>
+                                    <input type="text" class="settings-input" id="webdav-username" placeholder="用户名">
+                                </div>
+                                <div class="settings-item settings-item-column">
+                                    <div class="settings-label">密码</div>
+                                    <input type="password" class="settings-input" id="webdav-password" placeholder="密码">
+                                </div>
+                                <div class="settings-item settings-item-column">
+                                    <div class="settings-label">远程文件名</div>
+                                    <input type="text" class="settings-input" id="webdav-path" placeholder="homepage-config.json">
+                                </div>
+                                <div class="settings-item">
+                                    <div>
+                                        <div class="settings-label">连接状态</div>
+                                        <div class="settings-desc" id="webdav-status">未测试</div>
+                                    </div>
+                                    <button class="settings-btn settings-btn-secondary" id="btn-webdav-test">测试</button>
+                                </div>
+                                <div class="settings-item">
+                                    <div>
+                                        <div class="settings-label">上传配置</div>
+                                        <div class="settings-desc">将当前配置上传到 WebDAV</div>
+                                    </div>
+                                    <button class="settings-btn" id="btn-webdav-upload">上传</button>
+                                </div>
+                                <div class="settings-item">
+                                    <div>
+                                        <div class="settings-label">下载配置</div>
+                                        <div class="settings-desc">从 WebDAV 下载并覆盖当前配置</div>
+                                    </div>
+                                    <button class="settings-btn settings-btn-secondary" id="btn-webdav-download">下载</button>
+                                </div>
+                            </div>
                             <div class="settings-section" id="section-profile">
                                 <div class="settings-item">
                                     <div>
@@ -2748,6 +2957,67 @@
                     this.resetToDefault();
                     alert('已还原默认设置，页面即将刷新');
                     setTimeout(() => location.reload(), 300);
+                });
+            }
+
+            // WebDAV：输入框自动保存
+            const webdavFields = ['webdav-url', 'webdav-username', 'webdav-password', 'webdav-path'];
+            const webdavKeys = { 'webdav-url': 'url', 'webdav-username': 'username', 'webdav-password': 'password', 'webdav-path': 'remotePath' };
+            webdavFields.forEach(id => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                const cfg = Config.load();
+                el.value = cfg.webdav[webdavKeys[id]] || '';
+                el.addEventListener('input', () => {
+                    const c = Config.load();
+                    c.webdav[webdavKeys[id]] = el.value;
+                    Config.save(c);
+                });
+            });
+
+            // WebDAV：测试连接
+            const btnTest = document.getElementById('btn-webdav-test');
+            if (btnTest) {
+                btnTest.addEventListener('click', async () => {
+                    const statusEl = document.getElementById('webdav-status');
+                    if (statusEl) statusEl.textContent = '测试中...';
+                    const res = await WebDAV.testConnection();
+                    if (statusEl) {
+                        statusEl.textContent = res.message;
+                        statusEl.style.color = res.success ? '#008373' : '#e55';
+                    }
+                });
+            }
+
+            // WebDAV：上传
+            const btnUpload = document.getElementById('btn-webdav-upload');
+            if (btnUpload) {
+                btnUpload.addEventListener('click', async () => {
+                    btnUpload.disabled = true;
+                    btnUpload.textContent = '上传中...';
+                    const res = await WebDAV.upload();
+                    alert(res.message);
+                    btnUpload.disabled = false;
+                    btnUpload.textContent = '上传';
+                });
+            }
+
+            // WebDAV：下载
+            const btnDownload = document.getElementById('btn-webdav-download');
+            if (btnDownload) {
+                btnDownload.addEventListener('click', async () => {
+                    const result = confirm('下载配置将覆盖当前所有设置，确定继续吗？');
+                    if (!result) return;
+                    btnDownload.disabled = true;
+                    btnDownload.textContent = '下载中...';
+                    const res = await WebDAV.download();
+                    alert(res.message);
+                    if (res.success) {
+                        setTimeout(() => location.reload(), 300);
+                    } else {
+                        btnDownload.disabled = false;
+                        btnDownload.textContent = '下载';
+                    }
                 });
             }
 
