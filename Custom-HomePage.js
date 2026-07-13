@@ -1229,7 +1229,6 @@
             Config.save(cfg);
             return found.node;
         },
-
         // 递归构建书签树 HTML
         buildTreeNode(node, depth) {
             const isFolder = node.type === 'folder';
@@ -2636,7 +2635,6 @@
             }
         );
     }
-
     // ========== 渲染主页（仅生成框架，不包含模块样式或逻辑） ==========
     function renderHomepage() {
         document.open();
