@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Custom HomePage
 // @namespace    https://github.com/user/Custom-HomePage
-// @version      1.8.0
+// @version      1.8.1
 // @description  自定义主页
 // @author       You
 // @match        *://*/*
@@ -2058,41 +2058,66 @@
             const cfg = Config.load();
             const user = cfg.webdav.username || '';
             const pass = cfg.webdav.password || '';
-            return 'Basic ' + btoa(user + ':' + pass);
+            return 'Basic ' + btoa(unescape(encodeURIComponent(user + ':' + pass)));
+        },
+
+        // 从 GM_xmlhttpRequest 错误对象中提取错误信息
+        extractError(err) {
+            if (!err) return '未知错误';
+            if (typeof err === 'string') return err;
+            if (err.error) return err.error;
+            if (err.statusText) return err.statusText;
+            if (err.message) return err.message;
+            if (err.responseText) return err.responseText.slice(0, 200);
+            return '网络请求失败';
         },
 
         // 用 GM_xmlhttpRequest 发请求（绕开 CORS）
         request(method, body) {
             return new Promise((resolve, reject) => {
+                const url = this.getFullUrl();
                 const headers = { 'Authorization': this.getAuthHeader() };
                 if (body) headers['Content-Type'] = 'application/json';
+
                 GM_xmlhttpRequest({
                     method: method,
-                    url: this.getFullUrl(),
+                    url: url,
                     headers: headers,
                     data: body,
+                    timeout: 15000,
                     onload: (res) => resolve(res),
-                    onerror: (err) => reject(new Error(err.error || '网络错误')),
-                    ontimeout: () => reject(new Error('请求超时'))
+                    onerror: (err) => {
+                        const msg = this.extractError(err);
+                        reject(new Error(msg));
+                    },
+                    ontimeout: () => reject(new Error('请求超时（15秒）'))
                 });
             });
         },
 
-        // 测试连接（HEAD 请求）
+        // 测试连接（先用 HEAD，失败则用 GET 重试）
         async testConnection() {
             const cfg = Config.load();
             if (!cfg.webdav.url) {
                 return { success: false, message: '请填写 WebDAV 地址' };
             }
             try {
-                const res = await this.request('HEAD');
+                let res;
+                try {
+                    res = await this.request('HEAD');
+                } catch (headErr) {
+                    res = await this.request('GET');
+                }
                 if (res.status >= 200 && res.status < 300) {
                     return { success: true, message: '连接成功' };
                 }
                 if (res.status === 404) {
                     return { success: true, message: '连接成功（文件不存在）' };
                 }
-                return { success: false, message: '连接失败：' + res.status + ' ' + res.statusText };
+                if (res.status === 401 || res.status === 403) {
+                    return { success: false, message: '认证失败：请检查用户名和密码' };
+                }
+                return { success: false, message: '连接失败：' + res.status + ' ' + (res.statusText || '') };
             } catch (e) {
                 return { success: false, message: '网络错误：' + e.message };
             }
@@ -2110,7 +2135,10 @@
                 if (res.status >= 200 && res.status < 300) {
                     return { success: true, message: '上传成功' };
                 }
-                return { success: false, message: '上传失败：' + res.status + ' ' + res.statusText };
+                if (res.status === 401 || res.status === 403) {
+                    return { success: false, message: '认证失败：请检查用户名和密码' };
+                }
+                return { success: false, message: '上传失败：' + res.status + ' ' + (res.statusText || '') };
             } catch (e) {
                 return { success: false, message: '网络错误：' + e.message };
             }
@@ -2127,19 +2155,24 @@
                 if (res.status === 404) {
                     return { success: false, message: '远程文件不存在' };
                 }
+                if (res.status === 401 || res.status === 403) {
+                    return { success: false, message: '认证失败：请检查用户名和密码' };
+                }
                 if (res.status < 200 || res.status >= 300) {
-                    return { success: false, message: '下载失败：' + res.status + ' ' + res.statusText };
+                    return { success: false, message: '下载失败：' + res.status + ' ' + (res.statusText || '') };
                 }
                 const data = JSON.parse(res.responseText);
                 if (typeof data !== 'object' || data === null) {
                     return { success: false, message: '远程文件格式错误' };
                 }
-                // 过一遍迁移
                 const migrated = Config.migrate(data, data.version || 0);
                 migrated.version = Config.VERSION;
                 Config.save(migrated);
                 return { success: true, message: '下载成功' };
             } catch (e) {
+                if (e instanceof SyntaxError) {
+                    return { success: false, message: '远程文件不是有效的 JSON' };
+                }
                 return { success: false, message: '下载失败：' + e.message };
             }
         }
