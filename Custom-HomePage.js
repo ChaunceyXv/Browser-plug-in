@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Custom HomePage
 // @namespace    https://github.com/user/Custom-HomePage
-// @version      1.6.0
+// @version      1.6.1
 // @description  自定义主页
 // @author       You
 // @match        *://*/*
@@ -79,9 +79,11 @@
     // ========== 配置管理 ==========
     const Config = {
         KEY: 'homepage_config',
+        VERSION: 1,
 
         // 默认配置（所有持久化字段必须在此声明）
         defaults: {
+            version: 1,
             homepage: '',
             shortcutsVisible: true,
             searchEngines: [
@@ -145,9 +147,37 @@
             ]
         },
 
-        // 加载配置（合并默认值）
+        // 加载配置（含版本迁移）
         load() {
-            return Object.assign({}, this.defaults, Storage.get(this.KEY, {}));
+            const stored = Storage.get(this.KEY, {});
+            const savedVersion = stored.version || 0;
+
+            // 版本一致，直接用
+            if (savedVersion === this.VERSION) {
+                return stored;
+            }
+
+            // 需要迁移
+            const migrated = this.migrate(stored, savedVersion);
+            migrated.version = this.VERSION;
+            Storage.set(this.KEY, migrated);
+            return migrated;
+        },
+
+        // 配置迁移（从 fromVersion 升到当前版本）
+        migrate(data, fromVersion) {
+            let result = { ...data };
+
+            // v0 → v1：补全所有缺失的顶层字段
+            if (fromVersion < 1) {
+                result = Object.assign({}, this.defaults, result);
+                // bookmarkRoot 单独处理：用户有就用用户的，没有用默认
+                if (!result.bookmarkRoot) {
+                    result.bookmarkRoot = JSON.parse(JSON.stringify(this.defaults.bookmarkRoot));
+                }
+            }
+
+            return result;
         },
 
         // 保存配置
@@ -1170,6 +1200,7 @@
     // ========== 书签模块 ==========
     const Bookmarks = {
         visible: false,
+        _initialized: false,
         dragInfo: null,
         contextMenuId: null,
         pendingAction: null,
@@ -1568,11 +1599,13 @@
         },
 
         init() {
+            if (this._initialized) return;
             const container = document.getElementById('bookmarks-overlay');
             if (container) container.innerHTML = this.render();
             this.refreshColors();
             this.bindEvents();
             this.initDialog();
+            this._initialized = true;
         },
 
         // 应用当前引擎颜色
@@ -1998,6 +2031,7 @@
     // ========== 设置模块 ==========
     const Settings = {
         visible: false,
+        _initialized: false,
         selectedColor: COLOR_POOL[0],
         editingIndex: -1,
 
@@ -2361,11 +2395,13 @@
         },
 
         init() {
+            if (this._initialized) return;
             const container = document.getElementById('settings-overlay');
             if (container) container.innerHTML = this.render();
             this.applyTabColor();
             this.bindEvents();
             this.refreshEngineList();
+            this._initialized = true;
         },
 
         applyTabColor() {
