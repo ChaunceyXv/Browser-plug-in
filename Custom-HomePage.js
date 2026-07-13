@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Custom HomePage
 // @namespace    https://github.com/user/Custom-HomePage
-// @version      1.9.2
+// @version      1.9.3
 // @description  自定义主页
 // @author       You
 // @match        *://*/*
