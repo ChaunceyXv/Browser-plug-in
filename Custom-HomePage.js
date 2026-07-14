@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         Custom HomePage
-// @namespace    https://github.com/ChaunceyXv/Browser-plug-in/blob/Main/Custom-HomePage.js
-// @version      2.1.1
-// @description  这是一个把任意网页设置为自定义主页的浏览器油猴脚本
-// @author       ChaunceyXu
+// @namespace    https://github.com/user/Custom-HomePage
+// @version      2.1.3
+// @description  自定义主页
+// @author       You
 // @match        *://*/*
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -764,6 +764,8 @@
         longPressTimer: null,
         dragSrcIndex: -1,
         pendingAction: null,
+        _drag: null,
+        _suppressClick: false,
 
         // 渲染快捷方式区域
         render() {
@@ -780,7 +782,7 @@
                              data-index="${i}"
                              data-id="${s.id}"
                              data-url="${this.editing ? '' : s.url}"
-                             draggable="${this.editing ? 'true' : 'false'}">
+                             draggable="false">
                             <div class="shortcut-icon" style="background:${s.color}">
                                 ${s.title.charAt(0)}
                                 ${this.editing ? `<span class="shortcut-delete" data-index="${i}">✕</span>` : ''}
@@ -832,6 +834,9 @@
                     .shortcut-item.editing .shortcut-icon {
                         animation: wiggle .3s ease-in-out infinite alternate;
                     }
+                    .shortcut-item.editing {
+                        touch-action: none;
+                    }
                     @keyframes wiggle {
                         0%   { transform: rotate(-1deg); }
                         100% { transform: rotate(1deg); }
@@ -840,7 +845,13 @@
                         transform: scale(.92);
                     }
                     .shortcut-item.dragging {
-                        opacity: .4;
+                        opacity: .92;
+                        transform: scale(1.08);
+                        box-shadow: 0 10px 24px rgba(0,0,0,.25);
+                        z-index: 500;
+                    }
+                    .shortcut-item.dragging .shortcut-icon {
+                        animation: none;
                     }
                     .shortcut-icon {
                         width: 56px;
@@ -1127,6 +1138,7 @@
 
             // 处理点击事件（打开 URL、删除、添加、编辑）
             container.addEventListener('click', (e) => {
+                if (this._suppressClick) { this._suppressClick = false; return; }
                 if (!this.editing) {
                     const item = e.target.closest('.shortcut-item:not(.empty)');
                     if (item) {
@@ -1169,42 +1181,86 @@
                 }
             });
 
-            // 拖拽排序
-            container.addEventListener('dragstart', (e) => {
+            // ===== 编辑模式下的自由拖拽（指针事件，触摸/鼠标通用）=====
+            // 判定轻触与移动：轻触 → 交由 click 弹编辑/添加弹窗；移动超过阈值 → 自由拖拽排序
+            container.addEventListener('pointerdown', (e) => {
                 if (!this.editing) return;
+                if (e.target.closest('.shortcut-delete')) return; // 删除由 click 处理
                 const item = e.target.closest('.shortcut-item.editing');
                 if (!item) return;
-                this.dragSrcIndex = parseInt(item.dataset.index);
-                item.classList.add('dragging');
-                e.dataTransfer.effectAllowed = 'move';
+                const rect = item.getBoundingClientRect();
+                this._drag = {
+                    item,
+                    idx: parseInt(item.dataset.index),
+                    pointerId: e.pointerId,
+                    startX: e.clientX,
+                    startY: e.clientY,
+                    rect,
+                    w: rect.width,
+                    h: rect.height,
+                    moved: false
+                };
             });
 
-            container.addEventListener('dragend', (e) => {
-                const item = e.target.closest('.shortcut-item');
-                if (item) item.classList.remove('dragging');
-                container.querySelectorAll('.shortcut-item').forEach(el => el.classList.remove('dragging'));
+            container.addEventListener('pointermove', (e) => {
+                const d = this._drag;
+                if (!d || d.pointerId !== e.pointerId) return;
+                const dx = e.clientX - d.startX;
+                const dy = e.clientY - d.startY;
+                if (!d.moved) {
+                    if (Math.hypot(dx, dy) < 8) return; // 阈值内视为轻触
+                    // 超过阈值 → 进入自由拖拽
+                    d.moved = true;
+                    d.item.classList.add('dragging');
+                    try { d.item.setPointerCapture(e.pointerId); } catch (_) {}
+                    d.item.style.position = 'fixed';
+                    d.item.style.margin = '0';
+                    d.item.style.width = d.w + 'px';
+                    d.item.style.height = d.h + 'px';
+                    d.item.style.left = d.rect.left + 'px';
+                    d.item.style.top = d.rect.top + 'px';
+                    d.item.style.pointerEvents = 'none'; // 让 elementFromPoint 命中下方项
+                }
+                // 跟随手指（以指针为中心）
+                d.item.style.left = (e.clientX - d.w / 2) + 'px';
+                d.item.style.top = (e.clientY - d.h / 2) + 'px';
+                // 高亮最近的目标槽位
+                const over = this._nearestEditingItem(e.clientX, e.clientY, d.item);
+                container.querySelectorAll('.shortcut-item').forEach(el => { el.style.outline = ''; });
+                if (over && over !== d.item) over.style.outline = '2px solid var(--engine-color, #008373)';
             });
 
-            container.addEventListener('dragover', (e) => {
-                e.preventDefault();
-                e.dataTransfer.dropEffect = 'move';
-            });
-
-            container.addEventListener('drop', (e) => {
-                e.preventDefault();
-                if (!this.editing || this.dragSrcIndex < 0) return;
-                const target = e.target.closest('.shortcut-item.editing');
-                if (!target) return;
-                const targetIndex = parseInt(target.dataset.index);
-                if (this.dragSrcIndex === targetIndex) return;
-
+            const endDrag = (e) => {
+                const d = this._drag;
+                if (!d || d.pointerId !== e.pointerId) return;
+                container.querySelectorAll('.shortcut-item').forEach(el => { el.style.outline = ''; });
+                if (!d.moved) {
+                    // 轻触：不拖拽，交由 click 打开弹窗
+                    this._drag = null;
+                    return;
+                }
+                // 完成拖拽：清理样式并按最近槽位重排
+                d.item.classList.remove('dragging');
+                ['position','margin','width','height','left','top','zIndex','pointerEvents']
+                    .forEach(p => { d.item.style[p] = ''; });
+                const over = this._nearestEditingItem(e.clientX, e.clientY, d.item);
+                let targetIndex = d.idx;
+                if (over) targetIndex = parseInt(over.dataset.index);
                 const cfg = Config.load();
-                const [moved] = cfg.shortcuts.splice(this.dragSrcIndex, 1);
-                cfg.shortcuts.splice(targetIndex, 0, moved);
-                Config.save(cfg);
+                const shortcuts = cfg.shortcuts || [];
+                if (targetIndex !== d.idx && targetIndex >= 0 && targetIndex < shortcuts.length) {
+                    const [moved] = shortcuts.splice(d.idx, 1);
+                    shortcuts.splice(targetIndex, 0, moved);
+                    cfg.shortcuts = shortcuts;
+                    Config.save(cfg);
+                }
+                this._drag = null;
+                this._suppressClick = true; // 抑制拖拽后误触发的 click
+                setTimeout(() => { this._suppressClick = false; }, 350);
                 this.init();
-                this.dragSrcIndex = -1;
-            });
+            };
+            container.addEventListener('pointerup', endDrag);
+            container.addEventListener('pointercancel', endDrag);
         },
 
         // 执行弹窗中的待处理操作（添加或编辑）
@@ -1252,6 +1308,21 @@
         hide() {
             const el = document.getElementById('shortcuts-area');
             if (el) el.style.display = 'none';
+        },
+
+        // 返回离 (x,y) 最近的编辑中快捷方式元素（排除 dragged 自身）
+        _nearestEditingItem(x, y, exclude) {
+            const container = document.getElementById('shortcuts-area');
+            if (!container) return null;
+            let best = null, bestDist = Infinity;
+            container.querySelectorAll('.shortcut-item.editing').forEach(el => {
+                if (el === exclude) return;
+                const r = el.getBoundingClientRect();
+                const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+                const dist = Math.hypot(x - cx, y - cy);
+                if (dist < bestDist) { bestDist = dist; best = el; }
+            });
+            return best;
         }
     };
 
