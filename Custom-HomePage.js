@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Custom HomePage
 // @namespace    https://github.com/user/Custom-HomePage
-// @version      1.9.9
+// @version      2.0.0
 // @description  自定义主页
 // @author       You
 // @match        *://*/*
@@ -28,6 +28,7 @@
  *   Bookmarks   — 书签面板（默认隐藏，从底部滑入，点击 Logo 触发）
  *   Settings    — 设置面板（默认隐藏，从底部滑入，长按 Logo 触发）
  *   Loader      — 全局加载指示器（右上角跳动圆点，自动触发）
+ *   SwitcherToolbar — 搜索引擎快切工具栏（默认关闭，开关在设置-工具栏；搜索详情页底部悬浮，仅匹配已配置引擎）
  *
  * 【渲染机制】
  *   - renderHomepage() 只提供 4 个空容器 + 1 个快捷方式弹窗容器，禁止在此处添加任何模块样式或逻辑
@@ -36,7 +37,7 @@
  *
  * 【持久化变量】
  *   GM_key: homepage_config
- *   结构: { homepage, shortcutsVisible, searchEngines, defaultEngine, bookmarkRoot, shortcuts }
+ *   结构: { homepage, shortcutsVisible, searchEngines, defaultEngine, bookmarkRoot, shortcuts, webdav, toolbarEnabled, toolbarStayDuration }
  *   - 新增配置项直接在 Config.defaults 中添加字段
  *   - 模块禁止直接调用 Storage，必须通过 Config 读写
  *
@@ -80,16 +81,21 @@
     // ========== 配置管理 ==========
     const Config = {
         KEY: 'homepage_config',
-        VERSION: 4,
+        VERSION: 7,
         _afterSave: null,
 
         // 默认配置（所有持久化字段必须在此声明）
         defaults: {
-            version: 4,
+            version: 7,
             homepage: '',
+            backgroundImage: '',
+            settingsBackgroundImage: '',
+            bookmarksBackgroundImage: '',
             shortcutsVisible: true,
+            toolbarEnabled: false,
+            toolbarStayDuration: 2,
             searchEngines: [
-                { name: 'Bing',       url: 'https://www.bing.com/search?q=', color: '#008373' },
+                { name: 'Bing',       url: 'https://cn.bing.com/search?q=', color: '#008373' },
                 { name: 'Baidu',      url: 'https://www.baidu.com/s?wd=',      color: '#2932E1' },
                 { name: 'Google',     url: 'https://www.google.com/search?q=', color: '#4285F4' },
                 { name: 'DuckDuckGo', url: 'https://duckduckgo.com/?q=',       color: '#DE5833' }
@@ -174,6 +180,23 @@
                     if (result.webdav.lastUploadTime === undefined) result.webdav.lastUploadTime = 0;
                     if (result.webdav.lastDownloadTime === undefined) result.webdav.lastDownloadTime = 0;
                 }
+            }
+
+            // v4 → v5：新增背景图片配置（全局 / 设置面板 / 书签面板）
+            if (fromVersion < 5) {
+                if (result.backgroundImage === undefined) result.backgroundImage = '';
+                if (result.settingsBackgroundImage === undefined) result.settingsBackgroundImage = '';
+                if (result.bookmarksBackgroundImage === undefined) result.bookmarksBackgroundImage = '';
+            }
+
+            // v5 → v6：新增搜索引擎快切工具栏开关
+            if (fromVersion < 6) {
+                if (result.toolbarEnabled === undefined) result.toolbarEnabled = false;
+            }
+
+            // v6 → v7：新增工具栏停留时间（秒）
+            if (fromVersion < 7) {
+                if (result.toolbarStayDuration === undefined) result.toolbarStayDuration = 2;
             }
 
             return result;
@@ -1528,6 +1551,20 @@
                 '<TITLE>Bookmarks</TITLE>\n<H1>Bookmarks</H1>\n' + body;
         },
 
+        // 统计某节点子树下的书签数量（不含文件夹节点，递归统计所有后代书签）
+        countBookmarks(node) {
+            if (!node || !node.children) return 0;
+            let count = 0;
+            for (const child of node.children) {
+                if (child.type === 'bookmark') {
+                    count++;
+                } else if (child.type === 'folder') {
+                    count += this.countBookmarks(child);
+                }
+            }
+            return count;
+        },
+
         // 递归构建书签树 HTML
         buildTreeNode(node, depth) {
             const isFolder = node.type === 'folder';
@@ -1552,6 +1589,7 @@
                             <span class="tree-arrow ${isRoot ? 'hidden' : ''} ${isExpanded ? 'expanded' : ''}" data-id="${node.id}">▶</span>
                             <span class="tree-icon">📁</span>
                             <span class="tree-title">${node.title}</span>
+                            <span class="tree-count">${this.countBookmarks(node)}</span>
                             <span class="tree-menu-btn" data-id="${node.id}">⋮</span>
                         </div>
                         <div class="tree-children ${isExpanded ? '' : 'collapsed'}" data-id="${node.id}">
@@ -1762,6 +1800,17 @@
                         text-overflow: ellipsis;
                         white-space: nowrap;
                         flex: 1 1 auto;
+                        min-width: 0;
+                    }
+                    .tree-count {
+                        flex-shrink: 0;
+                        margin-left: 6px;
+                        padding: 1px 7px;
+                        font-size: 11px;
+                        line-height: 1.5;
+                        color: #888;
+                        background: #f0f0f0;
+                        border-radius: 10px;
                         min-width: 0;
                     }
                     .tree-url {
@@ -2924,6 +2973,25 @@
                     .settings-item-column .settings-label {
                         font-size: 14px;
                     }
+                    .bg-row {
+                        display: flex;
+                        gap: 8px;
+                        width: 100%;
+                    }
+                    .bg-row .settings-btn {
+                        flex: 1;
+                        text-align: center;
+                    }
+                    .bg-preview {
+                        width: 100%;
+                        height: 72px;
+                        border-radius: 8px;
+                        border: 1px solid #e0e0e0;
+                        background-size: cover;
+                        background-position: center;
+                        background-repeat: no-repeat;
+                        background-color: #f0f0f0;
+                    }
                     .settings-input {
                         width: 100%;
                         padding: 10px 12px;
@@ -3020,8 +3088,68 @@
                                         <span class="toggle-slider"></span>
                                     </label>
                                 </div>
+
+                                <div class="settings-item settings-item-column">
+                                    <div class="settings-label">全局背景图片</div>
+                                    <div class="settings-desc">填写图片链接或上传图片，留空则使用默认背景</div>
+                                    <input type="text" class="settings-input" id="bg-global" placeholder="https://example.com/bg.jpg" value="${(cfg.backgroundImage||'').replace(/"/g,'&quot;')}">
+                                    <div class="bg-preview" id="bg-global-preview"></div>
+                                    <div class="bg-row">
+                                        <label class="settings-btn settings-btn-secondary">选择图片
+                                            <input type="file" id="bg-global-file" accept="image/*" hidden>
+                                        </label>
+                                        <button class="settings-btn settings-btn-secondary" id="bg-global-clear">清除</button>
+                                    </div>
+                                </div>
+
+                                <div class="settings-item settings-item-column">
+                                    <div class="settings-label">设置面板背景图片</div>
+                                    <div class="settings-desc">仅作用于设置面板背景</div>
+                                    <input type="text" class="settings-input" id="bg-settings" placeholder="https://example.com/bg.jpg" value="${(cfg.settingsBackgroundImage||'').replace(/"/g,'&quot;')}">
+                                    <div class="bg-preview" id="bg-settings-preview"></div>
+                                    <div class="bg-row">
+                                        <label class="settings-btn settings-btn-secondary">选择图片
+                                            <input type="file" id="bg-settings-file" accept="image/*" hidden>
+                                        </label>
+                                        <button class="settings-btn settings-btn-secondary" id="bg-settings-clear">清除</button>
+                                    </div>
+                                </div>
+
+                                <div class="settings-item settings-item-column">
+                                    <div class="settings-label">书签面板背景图片</div>
+                                    <div class="settings-desc">仅作用于书签面板背景</div>
+                                    <input type="text" class="settings-input" id="bg-bookmarks" placeholder="https://example.com/bg.jpg" value="${(cfg.bookmarksBackgroundImage||'').replace(/"/g,'&quot;')}">
+                                    <div class="bg-preview" id="bg-bookmarks-preview"></div>
+                                    <div class="bg-row">
+                                        <label class="settings-btn settings-btn-secondary">选择图片
+                                            <input type="file" id="bg-bookmarks-file" accept="image/*" hidden>
+                                        </label>
+                                        <button class="settings-btn settings-btn-secondary" id="bg-bookmarks-clear">清除</button>
+                                    </div>
+                                </div>
                             </div>
-                            <div class="settings-section" id="section-toolbar"><p style="color:#999;text-align:center;margin-top:40px;">工具栏 — 开发中...</p></div>
+                            <div class="settings-section" id="section-toolbar">
+                                <div class="settings-item">
+                                    <div>
+                                        <div class="settings-label">搜索引擎快切工具栏</div>
+                                        <div class="settings-desc">在搜索结果页底部显示悬浮工具栏，一键把当前搜索词切换到其它搜索引擎</div>
+                                    </div>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" id="toggle-toolbar" ${cfg.toolbarEnabled === true ? 'checked' : ''}>
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                </div>
+                                <div class="settings-item-column" style="border-bottom:none;">
+                                    <div class="settings-desc">开启后，当你停留在已配置搜索引擎（${cfg.searchEngines.map(e => e.name).join(' / ')}）的搜索结果页时，底部会出现快切栏；点击其它引擎即在当前页直接打开对应的搜索结果。</div>
+                                </div>
+                                <div class="settings-item">
+                                    <div>
+                                        <div class="settings-label">工具栏停留时间</div>
+                                        <div class="settings-desc">工具栏显示后自动隐藏的等待时长（秒）</div>
+                                    </div>
+                                    <input type="number" min="1" max="30" step="1" class="settings-input" id="toolbar-duration" value="${cfg.toolbarStayDuration || 2}" style="width:80px;flex-shrink:0;">
+                                </div>
+                            </div>
                             <div class="settings-section" id="section-webdav">
                                 <div class="settings-item">
                                     <div>
@@ -3261,6 +3389,10 @@
             this.refreshEngineList();
             const toggle = document.getElementById('toggle-shortcuts');
             if (toggle) toggle.checked = Config.load().shortcutsVisible !== false;
+            const toggleToolbar = document.getElementById('toggle-toolbar');
+            if (toggleToolbar) toggleToolbar.checked = Config.load().toolbarEnabled === true;
+            const durationEl = document.getElementById('toolbar-duration');
+            if (durationEl) durationEl.value = Config.load().toolbarStayDuration || 2;
             this.refreshWebdavTimes();
         },
 
@@ -3400,6 +3532,37 @@
                     }
                 });
             }
+
+            // 工具栏：搜索引擎快切开关
+            const toggleToolbarEl = document.getElementById('toggle-toolbar');
+            if (toggleToolbarEl) {
+                toggleToolbarEl.addEventListener('change', () => {
+                    const cfg = Config.load();
+                    cfg.toolbarEnabled = toggleToolbarEl.checked;
+                    Config.save(cfg);
+                    // 立即按当前页面状态评估（主页/非搜索页不会显示）
+                    SwitcherToolbar._evaluate();
+                });
+            }
+
+            // 工具栏：停留时间（秒，持久化，1~30）
+            const durationEl = document.getElementById('toolbar-duration');
+            if (durationEl) {
+                durationEl.addEventListener('change', () => {
+                    const cfg = Config.load();
+                    let v = parseInt(durationEl.value, 10);
+                    if (isNaN(v) || v < 1) v = 1;
+                    if (v > 30) v = 30;
+                    durationEl.value = v;
+                    cfg.toolbarStayDuration = v;
+                    Config.save(cfg);
+                });
+            }
+
+            // 背景图片设置（全局 / 设置面板 / 书签面板）
+            this._bindBgSetting('backgroundImage', 'bg-global', 'bg-global-file', 'bg-global-clear', 'bg-global-preview');
+            this._bindBgSetting('settingsBackgroundImage', 'bg-settings', 'bg-settings-file', 'bg-settings-clear', 'bg-settings-preview');
+            this._bindBgSetting('bookmarksBackgroundImage', 'bg-bookmarks', 'bg-bookmarks-file', 'bg-bookmarks-clear', 'bg-bookmarks-preview');
 
             // 导出配置
             const btnExport = document.getElementById('btn-export');
@@ -3576,6 +3739,327 @@
                     this.hide();
                 }
             });
+        },
+
+        // 绑定单个背景图片设置项：文本输入 + 上传图片 + 清除 + 预览
+        _bindBgSetting(key, inputId, fileId, clearId, previewId) {
+            const input = document.getElementById(inputId);
+            if (!input) return;
+
+            const applyPreview = (val) => {
+                const preview = document.getElementById(previewId);
+                if (!preview) return;
+                preview.style.backgroundImage = val
+                    ? `url("${String(val).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}")`
+                    : '';
+            };
+
+            const save = (val) => {
+                const cfg = Config.load();
+                cfg[key] = val;
+                Config.save(cfg);
+                input.value = val;
+                applyPreview(val);
+                applyBackgrounds();
+            };
+
+            applyPreview(input.value);
+
+            input.addEventListener('change', () => save(input.value.trim()));
+
+            const file = document.getElementById(fileId);
+            if (file) {
+                file.addEventListener('change', (e) => {
+                    const f = e.target.files[0];
+                    if (!f) return;
+                    if (f.size > 4 * 1024 * 1024) {
+                        alert('图片过大（超过 4MB），建议使用网络图片链接');
+                        file.value = '';
+                        return;
+                    }
+                    const reader = new FileReader();
+                    reader.onload = () => save(reader.result);
+                    reader.readAsDataURL(f);
+                });
+            }
+
+            const clear = document.getElementById(clearId);
+            if (clear) {
+                clear.addEventListener('click', () => {
+                    if (file) file.value = '';
+                    save('');
+                });
+            }
+        }
+    };
+
+    // ========== 搜索引擎快切工具栏模块 ==========
+    // 在搜索结果详情页底部悬浮显示已配置搜索引擎，点击即把当前搜索词切换到对应引擎
+    // 判定逻辑：当前页 host 命中某已配置引擎，且对应查询参数存在 → 视为搜索详情页
+    const SwitcherToolbar = {
+        visible: false,
+        _initialized: false,
+        _query: '',
+        _hideTimer: null,
+        _lastCtx: null,
+
+        // 从引擎 url 中解析查询参数名（如 q / wd），取首个参数键
+        _getParamName(engineUrl) {
+            try {
+                const u = new URL(Utils.ensureUrl(engineUrl));
+                const params = new URLSearchParams(u.search);
+                for (const key of params.keys()) return key;
+            } catch (e) {}
+            return 'q';
+        },
+
+        // 判断当前页是否为某已配置搜索引擎的搜索详情页，命中则返回 { engine, query }
+        getContext() {
+            const cfg = Config.load();
+            const engines = cfg.searchEngines || [];
+            const loc = window.location;
+            for (const eng of engines) {
+                try {
+                    const u = new URL(Utils.ensureUrl(eng.url));
+                    if (u.hostname === loc.hostname) {
+                        const params = new URLSearchParams(loc.search);
+                        const pname = this._getParamName(eng.url);
+                        const q = params.get(pname);
+                        if (q !== null && String(q).trim() !== '') {
+                            return { engine: eng, query: String(q).trim() };
+                        }
+                    }
+                } catch (e) {}
+            }
+            return null;
+        },
+
+        // 生成搜索引擎芯片 HTML
+        _chipsHTML(query, currentEngine) {
+            const cfg = Config.load();
+            const engines = cfg.searchEngines || [];
+            return engines.map(eng => {
+                const active = currentEngine && eng.name === currentEngine.name ? ' active' : '';
+                return `<div class="switcher-chip${active}" data-engine="${eng.name}" style="--chip-color:${eng.color}">
+                    <span class="switcher-chip-icon">${eng.name.charAt(0)}</span>
+                    <span class="switcher-chip-name">${eng.name}</span>
+                </div>`;
+            }).join('');
+        },
+
+        render(query, currentEngine) {
+            return `
+                <style>
+                    #switcher-toolbar {
+                        position: fixed;
+                        left: 12px;
+                        right: 12px;
+                        bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+                        display: flex;
+                        align-items: center;
+                        gap: 8px;
+                        padding: 10px 12px;
+                        background: rgba(255,255,255,.96);
+                        -webkit-backdrop-filter: blur(10px);
+                        backdrop-filter: blur(10px);
+                        box-shadow: 0 2px 12px rgba(0,0,0,.12);
+                        border-radius: 999px;
+                        overflow: hidden;
+                        z-index: 2147483600;
+                        box-sizing: border-box;
+                        transform: translateY(150%);
+                        transition: transform .3s ease-out;
+                        -webkit-tap-highlight-color: transparent;
+                        touch-action: manipulation;
+                    }
+                    #switcher-toolbar.show { transform: translateY(0); }
+                    .switcher-chips {
+                        display: flex;
+                        gap: 8px;
+                        overflow-x: auto;
+                        -webkit-overflow-scrolling: touch;
+                        scrollbar-width: none;
+                        border-radius: 18px;
+                    }
+                    .switcher-chips::-webkit-scrollbar { display: none; }
+                    .switcher-chip {
+                        display: flex;
+                        align-items: center;
+                        gap: 6px;
+                        padding: 6px 12px;
+                        border-radius: 18px;
+                        background: #f2f2f2;
+                        color: #333;
+                        font-size: 13px;
+                        white-space: nowrap;
+                        cursor: pointer;
+                        flex-shrink: 0;
+                        -webkit-tap-highlight-color: transparent;
+                        transition: background .15s, color .15s;
+                    }
+                    .switcher-chip:active { background: #e6e6e6; }
+                    .switcher-chip.active {
+                        background: var(--chip-color, #008373);
+                        color: #fff;
+                    }
+                    .switcher-chip-icon {
+                        width: 20px;
+                        height: 20px;
+                        border-radius: 5px;
+                        background: var(--chip-color, #008373);
+                        color: #fff;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        font-size: 12px;
+                        font-weight: 600;
+                        flex-shrink: 0;
+                    }
+                    .switcher-chip.active .switcher-chip-icon { background: rgba(255,255,255,.28); }
+                </style>
+                    <div id="switcher-toolbar">
+                    <div class="switcher-chips">${this._chipsHTML(query, currentEngine)}</div>
+                </div>`;
+        },
+
+        // 当前页是否为主页（按绝对地址比对，自定义主页可由任意绝对地址充当）
+        _isHomepage() {
+            const cfg = Config.load();
+            return cfg.homepage !== '' && cfg.homepage === window.location.href;
+        },
+
+        // 显示工具栏（内部已做开关 / 主页 / 上下文校验）
+        show(query, currentEngine) {
+            const cfg = Config.load();
+            if (!cfg.toolbarEnabled) return;
+            if (this._isHomepage()) return;
+            let bar = document.getElementById('switcher-toolbar');
+            if (!bar) {
+                const wrap = document.createElement('div');
+                wrap.innerHTML = this.render(query, currentEngine);
+                // render() 以 <style> 开头，需整体挂载（首个子元素不是工具栏 div）
+                document.body.appendChild(wrap);
+                bar = document.getElementById('switcher-toolbar');
+                this.bindEvents();
+            } else {
+                // SPA 翻页导致搜索词变化时，刷新芯片
+                const chips = bar.querySelector('.switcher-chips');
+                if (chips) chips.innerHTML = this._chipsHTML(query, currentEngine);
+            }
+            this._query = query || '';
+            this.visible = true;
+            requestAnimationFrame(() => { if (bar) bar.classList.add('show'); });
+        },
+
+        hide() {
+            const bar = document.getElementById('switcher-toolbar');
+            if (bar) bar.classList.remove('show');
+            this.visible = false;
+        },
+
+        bindEvents() {
+            const bar = document.getElementById('switcher-toolbar');
+            if (!bar) return;
+            // 事件委托：芯片重渲染也无需重复绑定
+            bar.addEventListener('click', (e) => {
+                const chip = e.target.closest('.switcher-chip');
+                if (!chip) return;
+                const name = chip.dataset.engine;
+                const cfg = Config.load();
+                const eng = (cfg.searchEngines || []).find(x => x.name === name);
+                if (!eng) return;
+                const q = this._query || '';
+                // 当前页直接跳转，不打开新标签页；确保引擎 url 带协议，避免拼接出相对地址
+                window.location.href = Utils.ensureUrl(eng.url) + encodeURIComponent(q);
+            });
+        },
+
+        // 根据开关与当前页面状态评估是否显示工具栏
+        _evaluate() {
+            const cfg = Config.load();
+            if (!cfg.toolbarEnabled) { this.hide(); return; }
+            if (this._isHomepage()) { this.hide(); return; }
+            if (this.getContext()) {
+                this.reveal();
+            } else {
+                this.hide();
+            }
+        },
+
+        // 显示工具栏并启动「2 秒后自动隐藏」计时器（供初始加载与向上滚动复用）
+        reveal() {
+            const cfg = Config.load();
+            if (!cfg.toolbarEnabled) return;
+            const ctx = this.getContext();
+            if (!ctx) return;
+            // 保存当前上下文，供滚动复用时避免重复解析
+            this._lastCtx = ctx;
+            this.show(ctx.query, ctx.engine);
+            this._startHideTimer();
+        },
+
+        // 启动/重置「显示 N 秒后隐藏」计时器（N 取自 toolbarStayDuration，默认 2 秒）
+        _startHideTimer() {
+            const cfg = Config.load();
+            const ms = (typeof cfg.toolbarStayDuration === 'number' && cfg.toolbarStayDuration > 0)
+                ? cfg.toolbarStayDuration * 1000
+                : 2000;
+            clearTimeout(this._hideTimer);
+            this._hideTimer = setTimeout(() => this.hide(), ms);
+        },
+
+        // 滚动方向监听：向下看内容 → 保持隐藏；向上回看 → 显示 2 秒
+        _initScroll() {
+            let lastY = window.scrollY || 0;
+            window.addEventListener('scroll', () => {
+                const ctx = this.getContext();
+                const curY = window.scrollY || 0;
+                if (!ctx) { lastY = curY; return; }
+                const delta = curY - lastY;
+                lastY = curY;
+                if (Math.abs(delta) < 6) return; // 忽略惯性/橡皮筋抖动
+                if (delta < 0) {
+                    this.reveal();        // 向上回看 → 显示 2 秒
+                } else {
+                    clearTimeout(this._hideTimer);
+                    this.hide();          // 向下看内容 → 保持隐藏
+                }
+            }, { passive: true });
+        },
+
+        init() {
+            if (this._initialized) return;
+            this._initialized = true;
+            // 脚本 run-at document-start，普通页 body 可能尚未解析，待就绪后初始化
+            if (document.body) {
+                this._setup();
+            } else {
+                document.addEventListener('DOMContentLoaded', () => this._setup());
+            }
+        },
+
+        _setup() {
+            const self = this;
+            // 拦截 history 变化，支持搜索结果页的 SPA 翻页（如 Google / Bing 客户端跳转）
+            const _push = history.pushState, _replace = history.replaceState;
+            if (_push) {
+                history.pushState = function(...a) {
+                    const r = _push.apply(this, a);
+                    self._evaluate();
+                    return r;
+                };
+            }
+            if (_replace) {
+                history.replaceState = function(...a) {
+                    const r = _replace.apply(this, a);
+                    self._evaluate();
+                    return r;
+                };
+            }
+            window.addEventListener('popstate', () => self._evaluate());
+            window.addEventListener('hashchange', () => self._evaluate());
+            this._initScroll();
+            this._evaluate();
         }
     };
 
@@ -3620,6 +4104,34 @@
         );
     }
     // ========== 渲染主页（仅生成框架，不包含模块样式或逻辑） ==========
+    // ========== 背景图片应用 ==========
+    // 根据配置把背景图应用到对应元素（全局 body / 设置面板 / 书签面板）
+    function setBg(el, url) {
+        if (!el) return;
+        if (url) {
+            const safe = String(url).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+            el.style.backgroundImage = `url("${safe}")`;
+            el.style.backgroundSize = 'cover';
+            el.style.backgroundPosition = 'center';
+            el.style.backgroundRepeat = 'no-repeat';
+        } else {
+            el.style.backgroundImage = '';
+            el.style.backgroundSize = '';
+            el.style.backgroundPosition = '';
+            el.style.backgroundRepeat = '';
+        }
+    }
+
+    function applyBackgrounds() {
+        const cfg = Config.load();
+        // 全局背景 → body（全局行为，统一在渲染入口应用）
+        setBg(document.body, cfg.backgroundImage);
+        // 设置面板背景
+        setBg(document.getElementById('settings-panel'), cfg.settingsBackgroundImage);
+        // 书签面板背景
+        setBg(document.getElementById('bookmarks-panel'), cfg.bookmarksBackgroundImage);
+    }
+
     function renderHomepage() {
         document.open();
         document.write(`
@@ -3702,6 +4214,9 @@
         // 设置 WebDAV 自动同步 hook
         Config._afterSave = () => WebDAV.triggerAutoUpload();
 
+        // 应用背景图片（全局 / 设置面板 / 书签面板）
+        applyBackgrounds();
+
         // 检查远程更新
         WebDAV.checkRemoteUpdate().then(result => {
             if (result && result.updated) {
@@ -3713,6 +4228,8 @@
     // ========== 入口 ==========
     function init() {
         registerMenus();
+        // 快切工具栏在普通网页（含搜索结果页）上也需要运行，故无条件初始化
+        SwitcherToolbar.init();
         if (Utils.isHomepage()) {
             renderHomepage();
         }
