@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Custom HomePage
 // @namespace    https://github.com/user/Custom-HomePage
-// @version      1.9.3
+// @version      1.9.9
 // @description  自定义主页
 // @author       You
 // @match        *://*/*
@@ -102,50 +102,10 @@
                 expanded: true,
                 collapsible: false,
                 color: '#333333',
-                children: [
-                    {
-                        id: 'f1',
-                        title: '常用',
-                        type: 'folder',
-                        expanded: true,
-                        color: '#008373',
-                        children: [
-                            { id: 'b1', title: 'GitHub', type: 'bookmark', url: 'https://github.com', color: '#333333' },
-                            { id: 'b2', title: 'Google', type: 'bookmark', url: 'https://www.google.com', color: '#4285F4' }
-                        ]
-                    },
-                    {
-                        id: 'f2',
-                        title: '工具',
-                        type: 'folder',
-                        expanded: false,
-                        color: '#DE5833',
-                        children: [
-                            {
-                                id: 'f3',
-                                title: '设计资源',
-                                type: 'folder',
-                                expanded: false,
-                                color: '#7B1FA2',
-                                children: [
-                                    { id: 'b5', title: 'Figma',    type: 'bookmark', url: 'https://figma.com',    color: '#1A73E8' },
-                                    { id: 'b6', title: 'Dribbble', type: 'bookmark', url: 'https://dribbble.com', color: '#EA4335' }
-                                ]
-                            },
-                            { id: 'b3', title: '翻译',          type: 'bookmark', url: 'https://translate.google.com',   color: '#1DA1F2' },
-                            { id: 'b4', title: '开发者文档',   type: 'bookmark', url: 'https://developer.mozilla.org',    color: '#FF6B35' }
-                        ]
-                    },
-                    { id: 'b7', title: 'YouTube', type: 'bookmark', url: 'https://youtube.com', color: '#FF0000' }
-                ]
+                children: []
             },
             shortcuts: [
-                { id: 's1', title: 'GitHub',  url: 'https://github.com',          color: '#333333' },
-                { id: 's2', title: 'YouTube', url: 'https://youtube.com',         color: '#FF0000' },
-                { id: 's3', title: 'Gmail',   url: 'https://mail.google.com',     color: '#EA4335' },
-                { id: 's4', title: '地图',    url: 'https://maps.google.com',     color: '#4285F4' },
-                { id: 's5', title: '翻译',    url: 'https://translate.google.com', color: '#1A73E8' },
-                { id: 's6', title: 'Twitter', url: 'https://twitter.com',         color: '#1DA1F2' }
+                { id: 's-baidu', title: '百度', url: 'https://www.baidu.com', color: '#2932E1' }
             ],
             webdav: {
                 url: '',
@@ -1000,6 +960,8 @@
             if (container) {
                 container.innerHTML = this.render();
             }
+            // 仅在首次初始化时注入弹窗并绑定事件，避免重复绑定导致一次点击触发多次删除
+            if (this._initialized) return;
             // 注入独立弹窗到全局容器
             const dialogContainer = document.getElementById('shortcuts-dialog-container');
             if (dialogContainer) {
@@ -1026,6 +988,7 @@
             }
             this.bindEvents();
             this.initDialog();
+            this._initialized = true;
         },
 
         // 初始化快捷方式弹窗事件
@@ -1378,6 +1341,193 @@
             Config.save(cfg);
             return found.node;
         },
+
+        // 解析 Netscape 格式书签 HTML（浏览器导出的 .html 书签文件）
+        // 返回内部节点数组：{ type:'folder'|'bookmark', title, url, children }
+        // 采用自包含的标签扫描解析，不依赖 DOMParser，对任意浏览器导出的书签文件均稳健
+        parseNetscapeHTML(html) {
+            if (!html || typeof html !== 'string') return [];
+            try {
+                const tokens = this._tokenizeBookmarks(html);
+                const ctx = { i: 0 };
+                const parseDL = () => {
+                    const nodes = [];
+                    while (ctx.i < tokens.length) {
+                        const t = tokens[ctx.i];
+                        if (t.type === 'TEXT') { ctx.i++; continue; }
+                        if (t.type === 'DL_CLOSE') { ctx.i++; break; }
+                        if (t.type === 'DT_OPEN') {
+                            ctx.i++;
+                            while (ctx.i < tokens.length && tokens[ctx.i].type === 'TEXT') ctx.i++;
+                            const next = tokens[ctx.i];
+                            if (next && next.type === 'H3_OPEN') {
+                                ctx.i++;
+                                const title = this._consumeTextUntil(tokens, ctx, 'H3_CLOSE');
+                                while (ctx.i < tokens.length && tokens[ctx.i].type === 'TEXT') ctx.i++;
+                                let children = [];
+                                if (tokens[ctx.i] && tokens[ctx.i].type === 'DL_OPEN') {
+                                    ctx.i++;
+                                    children = parseDL();
+                                }
+                                nodes.push({
+                                    id: Utils.generateId(),
+                                    title: title,
+                                    type: 'folder',
+                                    expanded: true,
+                                    color: Utils.randomColor(),
+                                    children: children
+                                });
+                            } else if (next && next.type === 'A_OPEN') {
+                                const m = (next.attrs || '').match(/HREF="([^"]*)"/i);
+                                const href = m ? m[1] : '';
+                                ctx.i++;
+                                const title = this._consumeTextUntil(tokens, ctx, 'A_CLOSE');
+                                if (href) {
+                                    nodes.push({
+                                        id: Utils.generateId(),
+                                        title: title,
+                                        type: 'bookmark',
+                                        url: Utils.ensureUrl(href),
+                                        color: Utils.randomColor()
+                                    });
+                                }
+                            } else {
+                                ctx.i++;
+                            }
+                        } else {
+                            ctx.i++;
+                        }
+                    }
+                    return nodes;
+                };
+                return parseDL();
+            } catch (e) {
+                return [];
+            }
+        },
+
+        // 将 HTML 拆分为标签/文本 token 流（仅关注 DL/DT/H3/A 四类标签）
+        _tokenizeBookmarks(html) {
+            const tokens = [];
+            const re = /<(\/?)(DL|DT|H3|A)\b([^>]*)>/gi;
+            const map = {
+                'DL': { open: 'DL_OPEN',  close: 'DL_CLOSE' },
+                'DT': { open: 'DT_OPEN',  close: null },
+                'H3': { open: 'H3_OPEN',  close: 'H3_CLOSE' },
+                'A':  { open: 'A_OPEN',   close: 'A_CLOSE' }
+            };
+            let last = 0;
+            let m;
+            while ((m = re.exec(html))) {
+                const text = html.slice(last, m.index);
+                if (text.trim()) tokens.push({ type: 'TEXT', text: text });
+                const name  = m[2].toUpperCase();
+                const close = m[1] === '/';
+                const def   = map[name];
+                const type  = close ? def.close : def.open;
+                if (type) tokens.push({ type: type, attrs: m[3] });
+                last = m.index + m[0].length;
+            }
+            const tail = html.slice(last);
+            if (tail.trim()) tokens.push({ type: 'TEXT', text: tail });
+            return tokens;
+        },
+
+        // 从当前 token 位置收集文本，直到遇到指定闭合标签（跳过嵌套标签）
+        _consumeTextUntil(tokens, ctx, closeType) {
+            let text = '';
+            while (ctx.i < tokens.length && tokens[ctx.i].type !== closeType) {
+                const tk = tokens[ctx.i];
+                if (tk.type === 'TEXT') text += tk.text;
+                ctx.i++;
+            }
+            if (ctx.i < tokens.length && tokens[ctx.i].type === closeType) ctx.i++;
+            return text.replace(/\s+/g, ' ').trim();
+        },
+
+        // 将解析出的书签树导入到书签根目录
+        // 书签按 URL 去重、文件夹按标题去重并合并子项，可安全重复导入
+        // 返回实际新增的节点数量
+        importBookmarks(nodes) {
+            if (!Array.isArray(nodes) || nodes.length === 0) return 0;
+            const cfg = Config.load();
+            const root = cfg.bookmarkRoot;
+            if (!root.children) root.children = [];
+            let added = 0;
+            nodes.forEach(node => {
+                if (this._addImportedNode(root.children, node)) added++;
+            });
+            this.sortChildren(root.children);
+            Config.save(cfg);
+            return added;
+        },
+
+        // 递归添加导入节点，返回是否新增
+        _addImportedNode(targetArray, node) {
+            if (!node) return false;
+            if (node.type === 'bookmark') {
+                if (this._urlExistsIn(targetArray, node.url)) return false;
+                targetArray.push(node);
+                return true;
+            }
+            if (node.type === 'folder') {
+                const existing = targetArray.find(n =>
+                    n.type === 'folder' && n.title === node.title);
+                if (existing) {
+                    if (!existing.children) existing.children = [];
+                    let childAdded = 0;
+                    (node.children || []).forEach(child => {
+                        if (this._addImportedNode(existing.children, child)) childAdded++;
+                    });
+                    return childAdded > 0;
+                }
+                if (!node.children) node.children = [];
+                targetArray.push(node);
+                return true;
+            }
+            return false;
+        },
+
+        // 在节点数组中递归查找指定 URL 的书签
+        _urlExistsIn(arr, url) {
+            for (const n of arr) {
+                if (n.type === 'bookmark' && n.url === url) return true;
+                if (n.children && this._urlExistsIn(n.children, url)) return true;
+            }
+            return false;
+        },
+
+        // 将内部书签树序列化为 Netscape 格式 HTML（与浏览器导出的书签文件样式一致）
+        exportBookmarksHTML() {
+            const cfg = Config.load();
+            const root = cfg.bookmarkRoot;
+            const now = Math.floor(Date.now() / 1000);
+            const escapeHtml = (s) => (s || '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+            const serializeNode = (node, depth) => {
+                const indent = '    '.repeat(depth);
+                if (node.type === 'folder') {
+                    const children = node.children || [];
+                    let html = indent + '<DT><H3 ADD_DATE="' + now + '" LAST_MODIFIED="0">' + escapeHtml(node.title) + '</H3>\n';
+                    html += indent + '<DL><p>\n';
+                    children.forEach(child => { html += serializeNode(child, depth + 1); });
+                    html += indent + '</DL><p>\n';
+                    return html;
+                }
+                return indent + '<DT><A HREF="' + escapeHtml(node.url) + '" ADD_DATE="' + now + '">' + escapeHtml(node.title) + '</A>\n';
+            };
+            let body = '<DL><p>\n';
+            (root.children || []).forEach(node => { body += serializeNode(node, 1); });
+            body += '</DL><p>\n';
+            return '<!DOCTYPE NETSCAPE-Bookmark-file-1>\n' +
+                '<!-- This is an automatically generated file.\n     It will be read and overwritten.\n     DO NOT EDIT! -->\n' +
+                '<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">\n' +
+                '<TITLE>Bookmarks</TITLE>\n<H1>Bookmarks</H1>\n' + body;
+        },
+
         // 递归构建书签树 HTML
         buildTreeNode(node, depth) {
             const isFolder = node.type === 'folder';
@@ -1611,7 +1761,8 @@
                         overflow: hidden;
                         text-overflow: ellipsis;
                         white-space: nowrap;
-                        flex-shrink: 0;
+                        flex: 1 1 auto;
+                        min-width: 0;
                     }
                     .tree-url {
                         font-size: 11px;
@@ -1621,6 +1772,7 @@
                         white-space: nowrap;
                         max-width: 120px;
                         flex-shrink: 1;
+                        min-width: 0;
                         margin-left: 4px;
                     }
                     .tree-menu-btn {
@@ -2935,11 +3087,26 @@
                                         <div class="settings-label">导入配置</div>
                                         <div class="settings-desc">从 JSON 文件恢复配置（将覆盖当前配置）</div>
                                     </div>
-                                    <label class="settings-btn settings-btn-secondary" for="import-file">导入</label>
-                                    <input type="file" id="import-file" accept=".json" style="display:none">
-                                </div>
-                            </div>
-                            <div class="settings-section" id="section-reset">
+                    <label class="settings-btn settings-btn-secondary" for="import-file">导入</label>
+                    <input type="file" id="import-file" accept=".json" style="display:none">
+                </div>
+                <div class="settings-item">
+                    <div>
+                        <div class="settings-label">导入书签</div>
+                        <div class="settings-desc">从浏览器导出的 HTML 书签文件导入（Netscape 格式）</div>
+                    </div>
+                    <label class="settings-btn settings-btn-secondary" for="import-bookmarks-file">导入书签</label>
+                    <input type="file" id="import-bookmarks-file" accept=".html,.htm" style="display:none">
+                </div>
+                <div class="settings-item">
+                    <div>
+                        <div class="settings-label">导出书签</div>
+                        <div class="settings-desc">将当前书签导出为 HTML 文件（Netscape 格式，可导入浏览器）</div>
+                    </div>
+                    <button class="settings-btn settings-btn-secondary" id="btn-export-bookmarks">导出书签</button>
+                </div>
+            </div>
+            <div class="settings-section" id="section-reset">
                                 <div class="settings-item">
                                     <div>
                                         <div class="settings-label">还原默认设置</div>
@@ -3263,6 +3430,53 @@
                         importFile.value = '';
                     };
                     reader.readAsText(file);
+                });
+            }
+
+            // 导入书签（Netscape HTML 格式）
+            const importBookmarksFile = document.getElementById('import-bookmarks-file');
+            if (importBookmarksFile) {
+                importBookmarksFile.addEventListener('change', (e) => {
+                    const file = e.target.files[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = (ev) => {
+                        try {
+                            const nodes = Bookmarks.parseNetscapeHTML(ev.target.result);
+                            if (!nodes || nodes.length === 0) {
+                                alert('未能从该文件解析出书签，请确认是浏览器导出的 HTML 书签文件');
+                            } else {
+                                const added = Bookmarks.importBookmarks(nodes);
+                                alert('成功导入 ' + added + ' 个书签/文件夹');
+                                Bookmarks.refreshPanel();
+                            }
+                        } catch (err) {
+                            alert('导入失败：' + (err && err.message ? err.message : err));
+                        }
+                        importBookmarksFile.value = '';
+                    };
+                    reader.readAsText(file);
+                });
+            }
+
+            // 导出书签（Netscape HTML 格式）
+            const btnExportBookmarks = document.getElementById('btn-export-bookmarks');
+            if (btnExportBookmarks) {
+                btnExportBookmarks.addEventListener('click', () => {
+                    try {
+                        const html = Bookmarks.exportBookmarksHTML();
+                        const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = 'bookmarks-' + new Date().toISOString().slice(0, 10) + '.html';
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                    } catch (err) {
+                        alert('导出失败：' + (err && err.message ? err.message : err));
+                    }
                 });
             }
 
