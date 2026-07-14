@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         Custom HomePage
-// @namespace    https://github.com/user/Custom-HomePage
+// @namespace    https://github.com/ChaunceyXv/Browser-plug-in/blob/Main/Custom-HomePage.js
 // @version      2.1.1
-// @description  自定义主页
-// @author       You
+// @description  这是一个把任意网页设置为自定义主页的浏览器油猴脚本
+// @author       ChaunceyXu
 // @match        *://*/*
 // @grant        GM_setValue
 // @grant        GM_getValue
