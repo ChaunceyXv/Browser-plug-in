@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Custom HomePage
 // @namespace    https://github.com/user/Custom-HomePage
-// @version      2.0.0
+// @version      2.1.1
 // @description  自定义主页
 // @author       You
 // @match        *://*/*
@@ -95,10 +95,10 @@
             toolbarEnabled: false,
             toolbarStayDuration: 2,
             searchEngines: [
-                { name: 'Bing',       url: 'https://cn.bing.com/search?q=', color: '#008373' },
-                { name: 'Baidu',      url: 'https://www.baidu.com/s?wd=',      color: '#2932E1' },
-                { name: 'Google',     url: 'https://www.google.com/search?q=', color: '#4285F4' },
-                { name: 'DuckDuckGo', url: 'https://duckduckgo.com/?q=',       color: '#DE5833' }
+                { name: 'Bing',       url: 'https://cn.bing.com/search?q=', color: '#008373', enabled: true },
+                { name: 'Baidu',      url: 'https://www.baidu.com/s?wd=',      color: '#2932E1', enabled: true },
+                { name: 'Google',     url: 'https://www.google.com/search?q=', color: '#4285F4', enabled: true },
+                { name: 'DuckDuckGo', url: 'https://duckduckgo.com/?q=',       color: '#DE5833', enabled: true }
             ],
             defaultEngine: 'Bing',
             bookmarkRoot: {
@@ -388,7 +388,8 @@
         render() {
             const c = Config.load();
             this.engines = c.searchEngines;
-            this.currentEngine = this.engines.find(e => e.name === c.defaultEngine) || this.engines[0];
+            const enabledEngines = this.engines.filter(e => e.enabled !== false);
+            this.currentEngine = enabledEngines.find(e => e.name === c.defaultEngine) || enabledEngines[0] || this.engines[0];
             const displayName = Utils.truncate(this.currentEngine.name, 6);
 
             return `
@@ -558,7 +559,7 @@
                         <span class="search-engine-arrow">&#9660;</span>
                     </div>
                     <div class="search-engine-dropdown" id="engine-dropdown">
-                        ${this.engines.map(e => `
+                        ${enabledEngines.map(e => `
                             <div class="search-engine-option" data-engine="${e.name}">
                                 <div class="engine-icon" style="background:${e.color}">${e.name.charAt(0)}</div>
                                 <span class="engine-name">${e.name}</span>
@@ -609,11 +610,15 @@
         refreshDropdown() {
             const c = Config.load();
             this.engines = c.searchEngines;
-            this.currentEngine = this.engines.find(e => e.name === c.defaultEngine) || this.engines[0];
+            const enabledEngines = this.engines.filter(e => e.enabled !== false);
+            // 当前引擎被禁用时，回退到首个启用引擎用于展示（不改默认引擎）
+            if (!this.currentEngine || this.currentEngine.enabled === false) {
+                this.currentEngine = enabledEngines[0] || this.engines[0];
+            }
 
             const dropdown = document.getElementById('engine-dropdown');
             if (dropdown) {
-                dropdown.innerHTML = this.engines.map(e => `
+                dropdown.innerHTML = enabledEngines.map(e => `
                     <div class="search-engine-option" data-engine="${e.name}">
                         <div class="engine-icon" style="background:${e.color}">${e.name.charAt(0)}</div>
                         <span class="engine-name">${e.name}</span>
@@ -2918,6 +2923,48 @@
                         background: #fee;
                         color: #e55;
                     }
+                    .engine-toggle {
+                        position: relative;
+                        display: inline-block;
+                        width: 38px;
+                        height: 22px;
+                        flex-shrink: 0;
+                        -webkit-tap-highlight-color: transparent;
+                    }
+                    .engine-toggle input {
+                        opacity: 0;
+                        width: 0;
+                        height: 0;
+                        margin: 0;
+                    }
+                    .engine-toggle-slider {
+                        position: absolute;
+                        cursor: pointer;
+                        top: 0;
+                        left: 0;
+                        right: 0;
+                        bottom: 0;
+                        background: #e0e0e0;
+                        border-radius: 22px;
+                        transition: background .3s;
+                    }
+                    .engine-toggle-slider:before {
+                        content: "";
+                        position: absolute;
+                        height: 16px;
+                        width: 16px;
+                        left: 3px;
+                        bottom: 3px;
+                        background: #fff;
+                        border-radius: 50%;
+                        transition: transform .3s;
+                    }
+                    .engine-toggle input:checked + .engine-toggle-slider {
+                        background: var(--engine-color, #008373);
+                    }
+                    .engine-toggle input:checked + .engine-toggle-slider:before {
+                        transform: translateX(16px);
+                    }
                     .drag-handle {
                         cursor: grab;
                         color: #ccc;
@@ -3276,6 +3323,10 @@
                         <div class="engine-list-name">${eng.name}</div>
                         <div class="engine-list-url">${eng.url}</div>
                     </div>
+                    <label class="engine-toggle">
+                        <input type="checkbox" data-index="${i}" ${eng.enabled !== false ? 'checked' : ''}>
+                        <span class="engine-toggle-slider"></span>
+                    </label>
                     <div class="engine-list-delete" data-index="${i}">✕</div>
                     <div class="drag-handle">⋮⋮</div>
                 </div>
@@ -3336,7 +3387,7 @@
 
                 // 点击编辑
                 item.addEventListener('click', (e) => {
-                    if (e.target.closest('.engine-list-delete') || e.target.closest('.drag-handle')) return;
+                    if (e.target.closest('.engine-list-delete') || e.target.closest('.drag-handle') || e.target.closest('.engine-toggle')) return;
                     const idx = parseInt(item.dataset.index);
                     const eng = cfg.searchEngines[idx];
                     document.getElementById('eng-name').value = eng.name;
@@ -3361,6 +3412,21 @@
                     this.refreshEngineList();
                     this.resetForm();
                     Search.refreshDropdown();
+                });
+            });
+
+            // 引擎启用 / 禁用开关
+            listEl.querySelectorAll('.engine-toggle input').forEach(tg => {
+                tg.addEventListener('change', (e) => {
+                    e.stopPropagation();
+                    const idx = parseInt(tg.dataset.index);
+                    const c = Config.load();
+                    c.searchEngines[idx].enabled = tg.checked;
+                    Config.save(c);
+                    // 同步更新搜索下拉（隐藏/显示该引擎）
+                    Search.refreshDropdown();
+                    // 同步更新快切工具栏（搜索结果页隐藏/显示该芯片）
+                    SwitcherToolbar._evaluate();
                 });
             });
         },
@@ -3802,6 +3868,7 @@
         _query: '',
         _hideTimer: null,
         _lastCtx: null,
+        _touching: false,
 
         // 从引擎 url 中解析查询参数名（如 q / wd），取首个参数键
         _getParamName(engineUrl) {
@@ -3837,7 +3904,8 @@
         // 生成搜索引擎芯片 HTML
         _chipsHTML(query, currentEngine) {
             const cfg = Config.load();
-            const engines = cfg.searchEngines || [];
+            // 仅显示已启用的搜索引擎
+            const engines = (cfg.searchEngines || []).filter(e => e.enabled !== false);
             return engines.map(eng => {
                 const active = currentEngine && eng.name === currentEngine.name ? ' active' : '';
                 return `<div class="switcher-chip${active}" data-engine="${eng.name}" style="--chip-color:${eng.color}">
@@ -3972,6 +4040,20 @@
                 // 当前页直接跳转，不打开新标签页；确保引擎 url 带协议，避免拼接出相对地址
                 window.location.href = Utils.ensureUrl(eng.url) + encodeURIComponent(q);
             });
+
+            // 触摸/按住工具栏时取消自动隐藏，避免交互过程中工具栏突然消失
+            bar.addEventListener('touchstart', () => {
+                this._touching = true;
+                clearTimeout(this._hideTimer);
+            }, { passive: true });
+            const endTouch = () => {
+                if (!this._touching) return;
+                this._touching = false;
+                // 松手后按设定时长重新计时自动隐藏
+                this._startHideTimer();
+            };
+            document.addEventListener('touchend', endTouch, { passive: true });
+            document.addEventListener('touchcancel', endTouch, { passive: true });
         },
 
         // 根据开关与当前页面状态评估是否显示工具栏
@@ -4021,6 +4103,7 @@
                 if (delta < 0) {
                     this.reveal();        // 向上回看 → 显示 2 秒
                 } else {
+                    if (this._touching) return;  // 正在操作工具栏时不隐藏
                     clearTimeout(this._hideTimer);
                     this.hide();          // 向下看内容 → 保持隐藏
                 }
