@@ -2861,6 +2861,20 @@
                         margin-bottom: 16px;
                         padding-left: 12px;
                     }
+                    .engine-form-fields {
+                        display: flex;
+                        flex-direction: column;
+                        gap: 6px;
+                        flex: 1;
+                        min-width: 0;
+                    }
+                    .engine-form-actions {
+                        display: flex;
+                        flex-direction: column;
+                        gap: 6px;
+                        flex-shrink: 0;
+                        width: 64px;
+                    }
                     .color-picker-wrapper {
                         position: relative;
                         flex-shrink: 0;
@@ -2911,12 +2925,16 @@
                         color: #333;
                         outline: none;
                         background: #f9f9f9;
+                        width: 100%;
+                        box-sizing: border-box;
                     }
                     .engine-form input:focus {
                         border-color: var(--engine-color, #008373);
                     }
-                    #eng-name { flex: .6; min-width: 50px; }
-                    #eng-url  { flex: 2.4; min-width: 120px; }
+                    .engine-form-actions .engine-form-btn {
+                        width: 100%;
+                        box-sizing: border-box;
+                    }
                     .engine-form-btn {
                         padding: 8px 14px;
                         border: none;
@@ -3188,10 +3206,14 @@
                                             ${COLOR_POOL.map(c => `<div class="color-pool-item ${c === this.selectedColor ? 'selected' : ''}" data-color="${c}" style="background:${c}"></div>`).join('')}
                                         </div>
                                     </div>
-                                    <input type="text" id="eng-name" placeholder="名称">
-                                    <input type="text" id="eng-url" placeholder="URL">
-                                    <button class="engine-form-btn btn-add" id="btn-add-engine">添加</button>
-                                    <button class="engine-form-btn btn-clear" id="btn-clear-form">清空</button>
+                                    <div class="engine-form-fields">
+                                        <input type="text" id="eng-name" placeholder="名称">
+                                        <input type="text" id="eng-url" placeholder="URL">
+                                    </div>
+                                    <div class="engine-form-actions">
+                                        <button class="engine-form-btn btn-add" id="btn-add-engine">添加</button>
+                                        <button class="engine-form-btn btn-clear" id="btn-clear-form">清空</button>
+                                    </div>
                                 </div>
                                 <div class="engine-list" id="engine-list"></div>
                             </div>
